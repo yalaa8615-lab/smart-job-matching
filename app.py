@@ -21,23 +21,23 @@ st.write(
 jobs = [
     {
         "Job": "Front-End Developer",
-        "Requirements": "HTML CSS JavaScript React Web Development"
+        "Requirements": ["HTML", "CSS", "JavaScript", "React", "Web Development"]
     },
     {
         "Job": "Python Back-End Developer",
-        "Requirements": "Python Django Flask SQL REST APIs"
+        "Requirements": ["Python", "Django", "Flask", "SQL", "REST APIs"]
     },
     {
         "Job": "Data Analyst",
-        "Requirements": "Python Pandas SQL Data Visualization Excel"
+        "Requirements": ["Python", "Pandas", "SQL", "Data Visualization", "Excel"]
     },
     {
         "Job": "Machine Learning Engineer",
-        "Requirements": "Python Machine Learning TensorFlow Deep Learning"
+        "Requirements": ["Python", "Machine Learning", "TensorFlow", "Deep Learning"]
     },
     {
         "Job": "UI/UX Designer",
-        "Requirements": "Figma User Research Wireframing Prototyping"
+        "Requirements": ["Figma", "User Research", "Wireframing", "Prototyping"]
     }
 ]
 
@@ -68,20 +68,30 @@ if uploaded_file is not None:
                 cv_vector = model.encode([cv_text])
                 results = []
 
-                for job in jobs:
-                    job_vector = model.encode(
-                        [job["Requirements"]]
-                    )
-                    score = cosine_similarity(
-                        cv_vector, job_vector
-                    )[0][0]
+               for job in jobs:
+    requirements = job["Requirements"]
 
-                    results.append({
-                        "Job": job["Job"],
-                        "Match Score (%)": round(
-                            float(score) * 100, 2
-                        )
-                    })
+    matched_skills = [
+        skill for skill in requirements
+        if skill.lower() in cv_text.lower()
+    ]
+
+    missing_skills = [
+        skill for skill in requirements
+        if skill.lower() not in cv_text.lower()
+    ]
+
+    job_vector = model.encode([" ".join(requirements)])
+    score = cosine_similarity(
+        cv_vector, job_vector
+    )[0][0]
+
+    results.append({
+        "Job": job["Job"],
+        "Match Score (%)": round(float(score) * 100, 2),
+        "Matched Skills": ", ".join(matched_skills) or "None",
+        "Missing Skills": ", ".join(missing_skills) or "None"
+    })
 
                 df = pd.DataFrame(results)
                 df = df.sort_values(
