@@ -113,8 +113,11 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
+
     if st.button("Analyze My CV", type="primary"):
+
         with st.spinner("Reading and analyzing your CV..."):
+
             try:
                 reader = PdfReader(uploaded_file)
                 cv_text = ""
@@ -145,6 +148,7 @@ if uploaded_file is not None:
                 results = []
 
                 for index, job in enumerate(jobs):
+
                     requirements = job["Requirements"]
 
                     matched_skills = [
@@ -183,87 +187,110 @@ if uploaded_file is not None:
                     })
 
                 df = pd.DataFrame(results)
+
                 df = df.sort_values(
                     "Match Score (%)",
                     ascending=False
                 ).reset_index(drop=True)
 
+                # Save results so they survive Streamlit reruns
+                st.session_state["analysis_results"] = df
+
                 st.success("CV analysis completed!")
-
-                best_job = df.iloc[0]
-
-                st.subheader("Your Best Job Match")
-                st.metric(
-                    label=best_job["Job"],
-                    value=f'{best_job["Match Score (%)"]}%'
-                )
-
-                st.subheader("Job Matching Results")
-                st.dataframe(
-                    df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                st.caption(
-                    "Match Score is based on detected required skills. "
-                    "AI Text Similarity compares the CV text with job "
-                    "requirements. Neither score guarantees employment."
-                )
-
-                st.subheader("Skill Gap Analysis")
-
-                selected_job = st.selectbox(
-                    "Choose a job to inspect",
-                    df["Job"].tolist()
-                )
-
-                selected_result = df[
-                    df["Job"] == selected_job
-                ].iloc[0]
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.markdown("### ✅ Matched Skills")
-                    matched = selected_result["Matched Skills"]
-
-                    if matched == "None detected":
-                        st.write("No required skills detected yet.")
-                    else:
-                        for skill in matched.split(", "):
-                            st.write(f"✅ {skill}")
-
-                with col2:
-                    st.markdown("### 📚 Skills to Learn")
-                    missing = selected_result["Missing Skills"]
-
-                    if missing == "None detected":
-                        st.write("All listed skills were detected!")
-                    else:
-                        for skill in missing.split(", "):
-                            st.write(f"📌 {skill}")
-
-                st.subheader("Your Next Step")
-
-                if selected_result["Missing Skills"] == "None detected":
-                    st.info(
-                        "Great! Your CV contains all the listed "
-                        "skills for this role. Keep building projects "
-                        "to demonstrate your abilities."
-                    )
-                else:
-                    st.write(
-                        "Focus on learning and practicing these skills:"
-                    )
-                    st.write(selected_result["Missing Skills"])
-                    st.write(
-                        "Build a small project using these skills "
-                        "and add it to your portfolio."
-                    )
 
             except Exception as error:
                 st.error(
                     "Something went wrong while analyzing your CV."
                 )
                 st.code(str(error))
+
+
+# Display saved results outside the button
+if "analysis_results" in st.session_state:
+
+    df = st.session_state["analysis_results"]
+
+    st.success("CV analysis results are ready!")
+
+    best_job = df.iloc[0]
+
+    st.subheader("Your Best Job Match")
+
+    st.metric(
+        label=best_job["Job"],
+        value=f'{best_job["Match Score (%)"]}%'
+    )
+
+    st.subheader("Job Matching Results")
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.caption(
+        "Match Score is based on detected required skills. "
+        "AI Text Similarity compares the CV text with job "
+        "requirements. Neither score guarantees employment."
+    )
+
+    st.subheader("Skill Gap Analysis")
+
+    selected_job = st.selectbox(
+        "Choose a job to inspect",
+        df["Job"].tolist(),
+        key="selected_job"
+    )
+
+    selected_result = df[
+        df["Job"] == selected_job
+    ].iloc[0]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### ✅ Matched Skills")
+
+        matched = selected_result["Matched Skills"]
+
+        if matched == "None detected":
+            st.write("No required skills detected yet.")
+        else:
+            for skill in matched.split(", "):
+                st.write(f"✅ {skill}")
+
+    with col2:
+        st.markdown("### 📚 Skills to Learn")
+
+        missing = selected_result["Missing Skills"]
+
+        if missing == "None detected":
+            st.write("All listed skills were detected!")
+        else:
+            for skill in missing.split(", "):
+                st.write(f"📌 {skill}")
+
+    st.subheader("Your Next Step")
+
+    if selected_result["Missing Skills"] == "None detected":
+
+        st.info(
+            "Great! Your CV contains all the listed "
+            "skills for this role. Keep building projects "
+            "to demonstrate your abilities."
+        )
+
+    else:
+
+        st.write(
+            "Focus on learning and practicing these skills:"
+        )
+
+        st.write(selected_result["Missing Skills"])
+
+        st.write(
+            "Build a small project using these skills "
+            "and add it to your portfolio."
+        )
+
