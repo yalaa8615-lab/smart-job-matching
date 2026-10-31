@@ -159,6 +159,11 @@ def show_interview_page():
 
         webrtc_streamer(
             key="hire_bath_interview",
+            rtc_configuration={
+    "iceServers": [
+        {"urls": ["stun:stun.l.google.com:19302"]}
+    ]
+},
             mode=WebRtcMode.SENDRECV,
             video_processor_factory=lambda: InterviewProcessor(
                 monitor
