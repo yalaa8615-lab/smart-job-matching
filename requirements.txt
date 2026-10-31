@@ -1,5 +1,10 @@
+
 streamlit
 pypdf
 pandas
 sentence-transformers
 scikit-learn
+opencv-python-headless
+mediapipe
+streamlit-webrtc
+av
