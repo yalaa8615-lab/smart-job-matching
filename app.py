@@ -6,18 +6,31 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import re
 
+from interview_monitoring import show_interview_page
+
+
 st.set_page_config(
     page_title="HIRE BATH",
     page_icon="💼",
     layout="wide"
 )
 
-st.title("💼 HIRE BATH")
-st.subheader("Smart Job Matching & Skill Gap Analysis")
-st.write(
-    "Find suitable jobs, discover missing skills, "
-    "and plan your next career step."
+
+# ==============================
+# MAIN NAVIGATION
+# ==============================
+
+st.sidebar.title("💼 HIRE BATH")
+
+page = st.sidebar.radio(
+    "Navigation",
+    ["CV Analysis", "AI Mock Interview"]
 )
+
+
+# ==============================
+# JOBS DATABASE
+# ==============================
 
 jobs = [
     {
@@ -56,6 +69,11 @@ jobs = [
     }
 ]
 
+
+# ==============================
+# SKILL ALIASES
+# ==============================
+
 skill_aliases = {
     "JavaScript": ["javascript", "js"],
     "HTML": ["html"],
@@ -82,6 +100,10 @@ skill_aliases = {
 }
 
 
+# ==============================
+# HELPER FUNCTIONS
+# ==============================
+
 def normalize_text(text):
     text = text.lower()
     text = re.sub(r"[^a-z0-9+#.]+", " ", text)
@@ -94,6 +116,7 @@ def skill_is_present(skill, cv_text):
 
     for alias in aliases:
         normalized_alias = normalize_text(alias)
+
         if " " + normalized_alias + " " in normalized_cv:
             return True
 
@@ -107,190 +130,272 @@ def load_model():
     )
 
 
-uploaded_file = st.file_uploader(
-    "Upload your CV (PDF)",
-    type=["pdf"]
-)
+# ==============================
+# PAGE 1: CV ANALYSIS
+# ==============================
 
-if uploaded_file is not None:
+if page == "CV Analysis":
 
-    if st.button("Analyze My CV", type="primary"):
+    st.title("💼 HIRE BATH")
 
-        with st.spinner("Reading and analyzing your CV..."):
+    st.subheader(
+        "Smart Job Matching & Skill Gap Analysis"
+    )
 
-            try:
-                reader = PdfReader(uploaded_file)
-                cv_text = ""
+    st.write(
+        "Find suitable jobs, discover missing skills, "
+        "and plan your next career step."
+    )
 
-                for page in reader.pages:
-                    cv_text += (page.extract_text() or "") + "\n"
+    st.divider()
 
-                if not cv_text.strip():
-                    st.error(
-                        "No readable text was found in this PDF. "
-                        "Please upload a text-based PDF."
-                    )
-                    st.stop()
+    uploaded_file = st.file_uploader(
+        "Upload your CV (PDF)",
+        type=["pdf"]
+    )
 
-                model = load_model()
+    if uploaded_file is not None:
 
-                job_texts = [
-                    " ".join(job["Requirements"])
-                    for job in jobs
-                ]
+        if st.button(
+            "Analyze My CV",
+            type="primary"
+        ):
 
-                all_texts = [cv_text] + job_texts
-                vectors = model.encode(all_texts)
+            with st.spinner(
+                "Reading and analyzing your CV..."
+            ):
 
-                cv_vector = vectors[0].reshape(1, -1)
-                job_vectors = vectors[1:]
+                try:
 
-                results = []
+                    reader = PdfReader(uploaded_file)
 
-                for index, job in enumerate(jobs):
+                    cv_text = ""
 
-                    requirements = job["Requirements"]
+                    for page_pdf in reader.pages:
+                        cv_text += (
+                            page_pdf.extract_text() or ""
+                        ) + "\n"
 
-                    matched_skills = [
-                        skill for skill in requirements
-                        if skill_is_present(skill, cv_text)
-                    ]
+                    if not cv_text.strip():
 
-                    missing_skills = [
-                        skill for skill in requirements
-                        if skill not in matched_skills
-                    ]
-
-                    match_score = (
-                        len(matched_skills) / len(requirements)
-                    ) * 100
-
-                    similarity_score = float(
-                        cosine_similarity(
-                            cv_vector,
-                            job_vectors[index].reshape(1, -1)
-                        )[0][0]
-                    ) * 100
-
-                    results.append({
-                        "Job": job["Job"],
-                        "Match Score (%)": round(match_score, 1),
-                        "Matched Skills": ", ".join(
-                            matched_skills
-                        ) or "None detected",
-                        "Missing Skills": ", ".join(
-                            missing_skills
-                        ) or "None detected",
-                        "AI Text Similarity (%)": round(
-                            similarity_score, 1
+                        st.error(
+                            "No readable text was found in this PDF. "
+                            "Please upload a text-based PDF."
                         )
-                    })
 
-                df = pd.DataFrame(results)
+                        st.stop()
 
-                df = df.sort_values(
-                    "Match Score (%)",
-                    ascending=False
-                ).reset_index(drop=True)
+                    model = load_model()
 
-                # Save results so they survive Streamlit reruns
-                st.session_state["analysis_results"] = df
+                    job_texts = [
+                        " ".join(job["Requirements"])
+                        for job in jobs
+                    ]
 
-                st.success("CV analysis completed!")
+                    all_texts = [cv_text] + job_texts
 
-            except Exception as error:
-                st.error(
-                    "Something went wrong while analyzing your CV."
+                    vectors = model.encode(all_texts)
+
+                    cv_vector = vectors[0].reshape(1, -1)
+
+                    job_vectors = vectors[1:]
+
+                    results = []
+
+                    for index, job in enumerate(jobs):
+
+                        requirements = job["Requirements"]
+
+                        matched_skills = [
+                            skill
+                            for skill in requirements
+                            if skill_is_present(
+                                skill,
+                                cv_text
+                            )
+                        ]
+
+                        missing_skills = [
+                            skill
+                            for skill in requirements
+                            if skill not in matched_skills
+                        ]
+
+                        match_score = (
+                            len(matched_skills)
+                            / len(requirements)
+                        ) * 100
+
+                        similarity_score = float(
+                            cosine_similarity(
+                                cv_vector,
+                                job_vectors[index].reshape(1, -1)
+                            )[0][0]
+                        ) * 100
+
+                        results.append({
+
+                            "Job": job["Job"],
+
+                            "Match Score (%)": round(
+                                match_score, 1
+                            ),
+
+                            "Matched Skills": ", ".join(
+                                matched_skills
+                            ) or "None detected",
+
+                            "Missing Skills": ", ".join(
+                                missing_skills
+                            ) or "None detected",
+
+                            "AI Text Similarity (%)": round(
+                                similarity_score, 1
+                            )
+
+                        })
+
+                    df = pd.DataFrame(results)
+
+                    df = df.sort_values(
+                        "Match Score (%)",
+                        ascending=False
+                    ).reset_index(drop=True)
+
+                    # Save results between Streamlit reruns
+                    st.session_state["analysis_results"] = df
+
+                    # Reset selected job for new analysis
+                    st.session_state["selected_job"] = df.iloc[0]["Job"]
+
+                    st.success(
+                        "CV analysis completed!"
+                    )
+
+                except Exception as error:
+
+                    st.error(
+                        "Something went wrong while analyzing your CV."
+                    )
+
+                    st.code(str(error))
+
+
+    # ==============================
+    # DISPLAY SAVED RESULTS
+    # ==============================
+
+    if "analysis_results" in st.session_state:
+
+        df = st.session_state["analysis_results"]
+
+        st.divider()
+
+        st.subheader("Your Best Job Match")
+
+        best_job = df.iloc[0]
+
+        st.metric(
+            label=best_job["Job"],
+            value=f'{best_job["Match Score (%)"]}%'
+        )
+
+        st.subheader("Job Matching Results")
+
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.caption(
+            "Match Score is based on detected required skills. "
+            "AI Text Similarity compares the CV text with job "
+            "requirements. Neither score guarantees employment."
+        )
+
+        st.divider()
+
+        st.subheader("Skill Gap Analysis")
+
+        selected_job = st.selectbox(
+            "Choose a job to inspect",
+            df["Job"].tolist(),
+            key="selected_job"
+        )
+
+        selected_result = df[
+            df["Job"] == selected_job
+        ].iloc[0]
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.markdown("### ✅ Matched Skills")
+
+            matched = selected_result["Matched Skills"]
+
+            if matched == "None detected":
+
+                st.write(
+                    "No required skills detected yet."
                 )
-                st.code(str(error))
 
+            else:
 
-# Display saved results outside the button
-if "analysis_results" in st.session_state:
+                for skill in matched.split(", "):
+                    st.write(f"✅ {skill}")
 
-    df = st.session_state["analysis_results"]
+        with col2:
 
-    st.success("CV analysis results are ready!")
+            st.markdown("### 📚 Skills to Learn")
 
-    best_job = df.iloc[0]
+            missing = selected_result["Missing Skills"]
 
-    st.subheader("Your Best Job Match")
+            if missing == "None detected":
 
-    st.metric(
-        label=best_job["Job"],
-        value=f'{best_job["Match Score (%)"]}%'
-    )
+                st.write(
+                    "All listed skills were detected!"
+                )
 
-    st.subheader("Job Matching Results")
+            else:
 
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
+                for skill in missing.split(", "):
+                    st.write(f"📌 {skill}")
 
-    st.caption(
-        "Match Score is based on detected required skills. "
-        "AI Text Similarity compares the CV text with job "
-        "requirements. Neither score guarantees employment."
-    )
+        st.divider()
 
-    st.subheader("Skill Gap Analysis")
+        st.subheader("Your Next Step")
 
-    selected_job = st.selectbox(
-        "Choose a job to inspect",
-        df["Job"].tolist(),
-        key="selected_job"
-    )
+        if selected_result["Missing Skills"] == "None detected":
 
-    selected_result = df[
-        df["Job"] == selected_job
-    ].iloc[0]
+            st.info(
+                "Great! Your CV contains all the listed "
+                "skills for this role. Keep building projects "
+                "to demonstrate your abilities."
+            )
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### ✅ Matched Skills")
-
-        matched = selected_result["Matched Skills"]
-
-        if matched == "None detected":
-            st.write("No required skills detected yet.")
         else:
-            for skill in matched.split(", "):
-                st.write(f"✅ {skill}")
 
-    with col2:
-        st.markdown("### 📚 Skills to Learn")
+            st.write(
+                "Focus on learning and practicing these skills:"
+            )
 
-        missing = selected_result["Missing Skills"]
+            st.write(
+                selected_result["Missing Skills"]
+            )
 
-        if missing == "None detected":
-            st.write("All listed skills were detected!")
-        else:
-            for skill in missing.split(", "):
-                st.write(f"📌 {skill}")
+            st.write(
+                "Build a small project using these skills "
+                "and add it to your portfolio."
+            )
 
-    st.subheader("Your Next Step")
 
-    if selected_result["Missing Skills"] == "None detected":
+# ==============================
+# PAGE 2: AI MOCK INTERVIEW
+# ==============================
 
-        st.info(
-            "Great! Your CV contains all the listed "
-            "skills for this role. Keep building projects "
-            "to demonstrate your abilities."
-        )
+elif page == "AI Mock Interview":
 
-    else:
-
-        st.write(
-            "Focus on learning and practicing these skills:"
-        )
-
-        st.write(selected_result["Missing Skills"])
-
-        st.write(
-            "Build a small project using these skills "
-            "and add it to your portfolio."
-        )
-
+    show_interview_page()
