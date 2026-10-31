@@ -1,1 +1,28 @@
+import streamlit as st
 
+def show_interview_page():
+
+    st.title("🎥 AI Mock Interview")
+
+    st.write("Welcome to HIRE BATH AI Interview System")
+
+    st.info("Camera permission is required to start the interview.")
+
+    consent = st.checkbox(
+        "I agree to camera usage during the interview"
+    )
+
+    if consent:
+        picture = st.camera_input("Take an interview photo")
+
+        if picture:
+            st.success("Photo captured successfully!")
+
+            st.image(
+                picture,
+                caption="Interview Camera Capture",
+                use_container_width=True
+            )
+
+    else:
+        st.warning("Please agree before using the camera.")
