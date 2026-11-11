@@ -18,9 +18,10 @@ from streamlit_webrtc import (
 )
 
 
+# Model file path
 MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "face_landmarker.task"
+    "face_landmarker (3).task"
 )
 
 
@@ -181,11 +182,11 @@ def show_interview_page():
         "Looking away is an indicator, not proof of cheating."
     )
 
-    # Check model file before starting the camera
+    # Check model file
     if not os.path.isfile(MODEL_PATH):
 
         st.error(
-            "Model file not found: face_landmarker.task"
+            f"Model file not found: {os.path.basename(MODEL_PATH)}"
         )
         st.stop()
 
@@ -193,7 +194,7 @@ def show_interview_page():
 
         st.error(
             "The model file is not a valid task archive. "
-            "Please upload the original face_landmarker.task file."
+            "Please upload the original model file."
         )
 
         st.write(
@@ -209,7 +210,6 @@ def show_interview_page():
     )
 
     if not consent:
-
         st.warning(
             "Please provide consent before starting the camera."
         )
@@ -287,5 +287,7 @@ def show_interview_page():
         "Screenshots are temporarily stored in application "
         "memory during this session."
     )
+
+
 
 
