@@ -2,9 +2,11 @@
 import os
 import time
 import threading
+from datetime import datetime
 
 import cv2
 import mediapipe as mp
+import pandas as pd
 import streamlit as st
 
 from mediapipe.tasks import python as mp_python
@@ -35,32 +37,27 @@ MODEL_PATH = os.path.join(
 
 ICE_SERVERS = [
     {"urls": ["stun:stun.relay.metered.ca:80"]},
-
     {
         "urls": ["turn:global.relay.metered.ca:80"],
         "username": "f363667191b616bf8197b5b1",
         "credential": "13r6iWwyq/QoJYO6"
     },
-
     {
         "urls": ["turn:global.relay.metered.ca:80?transport=tcp"],
         "username": "f363667191b616bf8197b5b1",
         "credential": "13r6iWwyq/QoJYO6"
     },
-
     {
         "urls": ["turn:global.relay.metered.ca:443"],
         "username": "f363667191b616bf8197b5b1",
         "credential": "13r6iWwyq/QoJYO6"
     },
-
     {
         "urls": ["turns:global.relay.metered.ca:443?transport=tcp"],
         "username": "f363667191b616bf8197b5b1",
         "credential": "13r6iWwyq/QoJYO6"
     }
 ]
-
 
 RTC_CONFIGURATION = {
     "iceServers": ICE_SERVERS
@@ -77,23 +74,38 @@ class InterviewMonitor:
         self.events = []
         self.lock = threading.Lock()
 
-    def add_event(self, image, timestamp):
+    def add_event(self, image, timestamp, duration):
 
         with self.lock:
+
+            event_id = len(self.events)
+
             self.events.append({
+                "id": event_id,
                 "time": timestamp,
-                "image": image
+                "duration": duration,
+                "image": image,
+                "finished": False
             })
+
+            return event_id
+
+    def finish_event(self, event_id, duration):
+
+        if event_id is None:
+            return
+
+        with self.lock:
+
+            if 0 <= event_id < len(self.events):
+
+                self.events[event_id]["duration"] = duration
+                self.events[event_id]["finished"] = True
 
     def get_events(self):
 
         with self.lock:
-            return list(self.events)
-
-    def clear_events(self):
-
-        with self.lock:
-            self.events.clear()
+            return [event.copy() for event in self.events]
 
 
 # =========================
@@ -109,9 +121,9 @@ class InterviewProcessor(VideoProcessorBase):
         self.away_since = None
         self.last_capture = 0
         self.last_timestamp = 0
+        self.current_event_id = None
 
         self.landmarker = None
-        self.initialization_error = None
 
         try:
 
@@ -136,11 +148,27 @@ class InterviewProcessor(VideoProcessorBase):
 
             self.initialization_error = str(error)
 
+    def close_away_event(self, current_time):
+
+        if self.away_since is None:
+            return
+
+        duration = round(
+            current_time - self.away_since, 1
+        )
+
+        self.monitor.finish_event(
+            self.current_event_id,
+            duration
+        )
+
+        self.away_since = None
+        self.current_event_id = None
+
     def recv(self, frame):
 
         img = frame.to_ndarray(format="bgr24")
 
-        # If model initialization failed, keep the camera alive.
         if self.landmarker is None:
 
             cv2.putText(
@@ -167,10 +195,8 @@ class InterviewProcessor(VideoProcessorBase):
 
             current_time = time.monotonic()
 
-            timestamp_ms = int(current_time * 1000)
-
             timestamp_ms = max(
-                timestamp_ms,
+                int(current_time * 1000),
                 self.last_timestamp + 1
             )
 
@@ -187,7 +213,7 @@ class InterviewProcessor(VideoProcessorBase):
             )
 
             status = "Looking at screen"
-            status_color = (0, 255, 0)
+            color = (0, 255, 0)
 
             if results.face_landmarks:
 
@@ -215,7 +241,7 @@ class InterviewProcessor(VideoProcessorBase):
                     if deviation > 0.12:
 
                         status = "Looking away indicator"
-                        status_color = (0, 165, 255)
+                        color = (0, 165, 255)
 
                         if self.away_since is None:
                             self.away_since = current_time
@@ -224,8 +250,10 @@ class InterviewProcessor(VideoProcessorBase):
                             current_time - self.away_since
                         )
 
+                        # Record one event per looking-away episode.
                         if (
                             duration >= 3
+                            and self.current_event_id is None
                             and current_time - self.last_capture >= 10
                         ):
 
@@ -236,23 +264,30 @@ class InterviewProcessor(VideoProcessorBase):
 
                             if success:
 
-                                self.monitor.add_event(
-                                    encoded.tobytes(),
-                                    time.strftime("%H:%M:%S")
+                                timestamp = datetime.now().strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                )
+
+                                self.current_event_id = (
+                                    self.monitor.add_event(
+                                        encoded.tobytes(),
+                                        timestamp,
+                                        round(duration, 1)
+                                    )
                                 )
 
                                 self.last_capture = current_time
 
                     else:
 
-                        self.away_since = None
+                        self.close_away_event(current_time)
 
             else:
 
                 status = "Face not detected"
-                status_color = (0, 0, 255)
+                color = (0, 0, 255)
 
-                self.away_since = None
+                self.close_away_event(current_time)
 
             cv2.putText(
                 img,
@@ -260,11 +295,11 @@ class InterviewProcessor(VideoProcessorBase):
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
-                status_color,
+                color,
                 2
             )
 
-        except Exception:
+        except Exception as error:
 
             cv2.putText(
                 img,
@@ -284,8 +319,10 @@ class InterviewProcessor(VideoProcessorBase):
     def __del__(self):
 
         try:
+
             if self.landmarker is not None:
                 self.landmarker.close()
+
         except Exception:
             pass
 
@@ -307,31 +344,19 @@ def show_interview_page():
         "Looking away is an indicator, not proof of cheating."
     )
 
-    # Check model file
-
     if not os.path.isfile(MODEL_PATH):
 
         st.error(
             "Face Landmarker model file was not found."
         )
 
-        st.write(
-            "Expected file: face_landmarker (3).task"
-        )
-
         return
-
-    # Initialize monitor
 
     if "interview_monitor" not in st.session_state:
 
-        st.session_state.interview_monitor = (
-            InterviewMonitor()
-        )
+        st.session_state.interview_monitor = InterviewMonitor()
 
     monitor = st.session_state.interview_monitor
-
-    # Consent
 
     consent = st.checkbox(
         "I consent to camera processing and screenshot "
@@ -348,12 +373,6 @@ def show_interview_page():
 
     st.subheader("Live Interview Camera")
 
-    st.write(
-        "Allow camera access when your browser asks for permission."
-    )
-
-    # WebRTC camera
-
     webrtc_ctx = webrtc_streamer(
         key="hire_bath_interview",
         mode=WebRtcMode.SENDRECV,
@@ -368,8 +387,6 @@ def show_interview_page():
         async_processing=True
     )
 
-    # Connection status
-
     if webrtc_ctx.state.playing:
 
         st.success("Camera is running.")
@@ -377,8 +394,7 @@ def show_interview_page():
     else:
 
         st.warning(
-            "Camera is not connected yet. "
-            "Check browser camera permission and try starting it."
+            "Camera is not connected yet."
         )
 
     st.caption(
@@ -387,30 +403,130 @@ def show_interview_page():
 
     st.divider()
 
-    # Report
+    # =========================
+    # 6. INTERVIEW REPORT
+    # =========================
 
     st.subheader("Interview Monitoring Report")
 
     events = monitor.get_events()
 
-    st.metric(
-        "Looking Away Events",
-        len(events)
+    total_events = len(events)
+
+    completed_events = [
+        event for event in events
+        if event["finished"]
+    ]
+
+    total_duration = sum(
+        event["duration"]
+        for event in completed_events
     )
+
+    average_duration = (
+        total_duration / len(completed_events)
+        if completed_events else 0
+    )
+
+    # KPI CARDS
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.metric(
+            "Looking Away Events",
+            total_events
+        )
+
+    with col2:
+
+        st.metric(
+            "Total Away Time",
+            f"{total_duration:.1f} sec"
+        )
+
+    with col3:
+
+        st.metric(
+            "Average Duration",
+            f"{average_duration:.1f} sec"
+        )
+
+    st.divider()
+
+    # EVENT TABLE
+
+    st.subheader("Event Details")
 
     if events:
 
+        report_data = []
+
         for index, event in enumerate(events):
 
-            st.write(
-                f"Event {index + 1} - {event['time']}"
+            duration_text = (
+                f"{event['duration']:.1f} seconds"
+                if event["finished"]
+                else "Still looking away"
             )
 
-            st.image(
-                event["image"],
-                caption="Captured interview frame",
-                width=400
-            )
+            report_data.append({
+                "Event": index + 1,
+                "Date & Time": event["time"],
+                "Duration": duration_text,
+                "Status": (
+                    "Completed"
+                    if event["finished"]
+                    else "Ongoing"
+                )
+            })
+
+        report_df = pd.DataFrame(report_data)
+
+        st.dataframe(
+            report_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # CSV DOWNLOAD
+
+        csv_data = report_df.to_csv(
+            index=False
+        ).encode("utf-8-sig")
+
+        st.download_button(
+            label="Download Interview Report (CSV)",
+            data=csv_data,
+            file_name="interview_monitoring_report.csv",
+            mime="text/csv"
+        )
+
+        # SCREENSHOTS
+
+        st.subheader("Captured Screenshots")
+
+        for index, event in enumerate(events):
+
+            with st.expander(
+                f"Event {index + 1} - {event['time']}"
+            ):
+
+                st.write(
+                    "Duration: "
+                    + (
+                        f"{event['duration']:.1f} seconds"
+                        if event["finished"]
+                        else "Still looking away"
+                    )
+                )
+
+                st.image(
+                    event["image"],
+                    caption="Captured interview frame",
+                    width=450
+                )
 
     else:
 
@@ -418,15 +534,10 @@ def show_interview_page():
             "No looking-away events have been recorded."
         )
 
-    # Refresh report
-
-    if st.button("Refresh Interview Report"):
-
-        st.rerun()
-
     st.caption(
-        "Screenshots are temporarily stored in application "
-        "memory during this session."
+        "Screenshots and report data are temporarily stored "
+        "in application memory during this session."
     )
+
 
 
