@@ -2,6 +2,7 @@
 import os
 import time
 import threading
+import zipfile
 
 import cv2
 import mediapipe as mp
@@ -24,6 +25,7 @@ MODEL_PATH = os.path.join(
 
 
 class InterviewMonitor:
+
     def __init__(self):
         self.events = []
         self.lock = threading.Lock()
@@ -43,15 +45,11 @@ class InterviewMonitor:
 class InterviewProcessor(VideoProcessorBase):
 
     def __init__(self, monitor):
+
         self.monitor = monitor
         self.away_since = None
         self.last_capture = 0
         self.last_timestamp = 0
-
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(
-                "face_landmarker.task was not found."
-            )
 
         options = vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(
@@ -61,9 +59,17 @@ class InterviewProcessor(VideoProcessorBase):
             num_faces=1
         )
 
-        self.landmarker = vision.FaceLandmarker.create_from_options(
-            options
-        )
+        try:
+            self.landmarker = (
+                vision.FaceLandmarker.create_from_options(options)
+            )
+        except Exception as error:
+            raise RuntimeError(
+                f"Could not load Face Landmarker model. "
+                f"File size: {os.path.getsize(MODEL_PATH)} bytes. "
+                f"ZIP valid: {zipfile.is_zipfile(MODEL_PATH)}. "
+                f"Original error: {error}"
+            ) from error
 
     def recv(self, frame):
 
@@ -109,13 +115,11 @@ class InterviewProcessor(VideoProcessorBase):
 
             if face_width > 0:
 
-                deviation = abs(
-                    nose.x - face_center
-                ) / face_width
+                deviation = (
+                    abs(nose.x - face_center) / face_width
+                )
 
-                looking_away = deviation > 0.12
-
-                if looking_away:
+                if deviation > 0.12:
 
                     status = "Looking away indicator"
 
@@ -130,8 +134,7 @@ class InterviewProcessor(VideoProcessorBase):
                     ):
 
                         success, encoded = cv2.imencode(
-                            ".jpg",
-                            img
+                            ".jpg", img
                         )
 
                         if success:
@@ -178,88 +181,111 @@ def show_interview_page():
         "Looking away is an indicator, not proof of cheating."
     )
 
+    # Check model file before starting the camera
+    if not os.path.isfile(MODEL_PATH):
+
+        st.error(
+            "Model file not found: face_landmarker.task"
+        )
+        st.stop()
+
+    if not zipfile.is_zipfile(MODEL_PATH):
+
+        st.error(
+            "The model file is not a valid task archive. "
+            "Please upload the original face_landmarker.task file."
+        )
+
+        st.write(
+            "File size:",
+            os.path.getsize(MODEL_PATH),
+            "bytes"
+        )
+        st.stop()
+
     consent = st.checkbox(
         "I consent to camera processing and screenshot capture "
         "when a looking-away indicator is detected."
     )
 
-    if consent:
+    if not consent:
 
-        if "interview_monitor" not in st.session_state:
-            st.session_state.interview_monitor = InterviewMonitor()
-
-        monitor = st.session_state.interview_monitor
-
-        st.subheader("Live Interview Camera")
-
-        webrtc_streamer(
-            key="hire_bath_interview",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration={
-                "iceServers": [
-                    {
-                        "urls": [
-                            "stun:stun.l.google.com:19302"
-                        ]
-                    }
-                ]
-            },
-            video_processor_factory=lambda: InterviewProcessor(
-                monitor
-            ),
-            media_stream_constraints={
-                "video": True,
-                "audio": False
-            },
-            async_processing=True
-        )
-
-        st.caption(
-            "Allow camera access in your browser. "
-            "Stop the camera when the interview ends."
-        )
-
-        st.divider()
-
-        if st.button("Refresh Interview Report"):
-            st.rerun()
-
-        events = monitor.get_events()
-
-        st.subheader("Interview Monitoring Report")
-
-        st.metric(
-            "Looking Away Events",
-            len(events)
-        )
-
-        if events:
-
-            for index, event in enumerate(events):
-
-                st.write(
-                    f"Event {index + 1} - {event['time']}"
-                )
-
-                st.image(
-                    event["image"],
-                    caption="Captured interview frame",
-                    width=400
-                )
-
-        else:
-            st.success(
-                "No looking-away events have been recorded."
-            )
-
-        st.caption(
-            "Captured screenshots are temporarily stored "
-            "in application memory during this session."
-        )
-
-    else:
         st.warning(
             "Please provide consent before starting the camera."
         )
+        return
+
+    if "interview_monitor" not in st.session_state:
+        st.session_state.interview_monitor = InterviewMonitor()
+
+    monitor = st.session_state.interview_monitor
+
+    st.subheader("Live Interview Camera")
+
+    webrtc_streamer(
+        key="hire_bath_interview",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration={
+            "iceServers": [
+                {
+                    "urls": [
+                        "stun:stun.l.google.com:19302"
+                    ]
+                }
+            ]
+        },
+        video_processor_factory=lambda: InterviewProcessor(
+            monitor
+        ),
+        media_stream_constraints={
+            "video": True,
+            "audio": False
+        },
+        async_processing=True
+    )
+
+    st.caption(
+        "Allow camera access in your browser. "
+        "Stop the camera when the interview ends."
+    )
+
+    st.divider()
+
+    if st.button("Refresh Interview Report"):
+        st.rerun()
+
+    events = monitor.get_events()
+
+    st.subheader("Interview Monitoring Report")
+
+    st.metric(
+        "Looking Away Events",
+        len(events)
+    )
+
+    if events:
+
+        for index, event in enumerate(events):
+
+            st.write(
+                f"Event {index + 1} - {event['time']}"
+            )
+
+            st.image(
+                event["image"],
+                caption="Captured interview frame",
+                width=400
+            )
+
+    else:
+
+        st.success(
+            "No looking-away events have been recorded."
+        )
+
+    st.caption(
+        "Screenshots are temporarily stored in application "
+        "memory during this session."
+    )
 
 
