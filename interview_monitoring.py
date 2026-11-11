@@ -1,17 +1,27 @@
 
-import streamlit as st
-import mediapipe as mp
+import os
+import time
+import threading
+
 import cv2
-import time
-import threading
-import numpy as np
-import time
-import threading
+import mediapipe as mp
+import streamlit as st
+
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
+
 from streamlit_webrtc import (
     webrtc_streamer,
     WebRtcMode,
     VideoProcessorBase
 )
+
+
+MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "face_landmarker.task"
+)
+
 
 class InterviewMonitor:
     def __init__(self):
@@ -34,78 +44,103 @@ class InterviewProcessor(VideoProcessorBase):
 
     def __init__(self, monitor):
         self.monitor = monitor
-        self.face_mesh = mp.solutions.face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-
         self.away_since = None
         self.last_capture = 0
+        self.last_timestamp = 0
+
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(
+                "face_landmarker.task was not found."
+            )
+
+        options = vision.FaceLandmarkerOptions(
+            base_options=mp_python.BaseOptions(
+                model_asset_path=MODEL_PATH
+            ),
+            running_mode=vision.RunningMode.VIDEO,
+            num_faces=1
+        )
+
+        self.landmarker = vision.FaceLandmarker.create_from_options(
+            options
+        )
 
     def recv(self, frame):
 
         img = frame.to_ndarray(format="bgr24")
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        results = self.face_mesh.process(rgb)
+        current_time = time.monotonic()
+
+        timestamp_ms = int(current_time * 1000)
+        timestamp_ms = max(
+            timestamp_ms,
+            self.last_timestamp + 1
+        )
+        self.last_timestamp = timestamp_ms
+
+        mp_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=rgb
+        )
+
+        results = self.landmarker.detect_for_video(
+            mp_image,
+            timestamp_ms
+        )
 
         status = "Looking at screen"
 
-        if results.multi_face_landmarks:
+        if results.face_landmarks:
 
-            landmarks = results.multi_face_landmarks[0].landmark
+            landmarks = results.face_landmarks[0]
 
-            left_eye = landmarks[33]
-            right_eye = landmarks[263]
+            left_side = landmarks[234]
+            right_side = landmarks[454]
             nose = landmarks[1]
 
-            eye_distance = abs(
-                right_eye.x - left_eye.x
+            face_width = abs(
+                right_side.x - left_side.x
             )
 
-            eye_center = (
-                left_eye.x + right_eye.x
+            face_center = (
+                left_side.x + right_side.x
             ) / 2
 
-            if eye_distance > 0:
+            if face_width > 0:
 
                 deviation = abs(
-                    nose.x - eye_center
-                ) / eye_distance
+                    nose.x - face_center
+                ) / face_width
 
-                looking_away = deviation > 0.20
+                looking_away = deviation > 0.12
 
                 if looking_away:
 
                     status = "Looking away indicator"
 
                     if self.away_since is None:
-                        self.away_since = time.monotonic()
+                        self.away_since = current_time
 
-                    duration = (
-                        time.monotonic() - self.away_since
-                    )
+                    duration = current_time - self.away_since
 
                     if (
                         duration >= 3
-                        and time.monotonic() - self.last_capture >= 10
+                        and current_time - self.last_capture >= 10
                     ):
 
                         success, encoded = cv2.imencode(
-                            ".jpg", img
+                            ".jpg",
+                            img
                         )
 
                         if success:
-                            image_bytes = encoded.tobytes()
-
                             self.monitor.add_event(
-                                image_bytes,
+                                encoded.tobytes(),
                                 time.strftime("%H:%M:%S")
                             )
 
-                            self.last_capture = time.monotonic()
+                            self.last_capture = current_time
 
                 else:
                     self.away_since = None
@@ -132,20 +167,20 @@ class InterviewProcessor(VideoProcessorBase):
 
 def show_interview_page():
 
-    st.title("🎥 AI Mock Interview")
+    st.title("AI Mock Interview")
 
     st.write(
         "Welcome to HIRE BATH Interview Monitoring System"
     )
 
     st.info(
-        "This system monitors head direction during the interview. "
-        "Looking away is only an indicator, not proof of cheating."
+        "The system monitors face direction. "
+        "Looking away is an indicator, not proof of cheating."
     )
 
     consent = st.checkbox(
-        "I consent to live camera processing and capturing "
-        "screenshots when a looking-away indicator is detected."
+        "I consent to camera processing and screenshot capture "
+        "when a looking-away indicator is detected."
     )
 
     if consent:
@@ -159,12 +194,16 @@ def show_interview_page():
 
         webrtc_streamer(
             key="hire_bath_interview",
-            rtc_configuration={
-    "iceServers": [
-        {"urls": ["stun:stun.l.google.com:19302"]}
-    ]
-},
             mode=WebRtcMode.SENDRECV,
+            rtc_configuration={
+                "iceServers": [
+                    {
+                        "urls": [
+                            "stun:stun.l.google.com:19302"
+                        ]
+                    }
+                ]
+            },
             video_processor_factory=lambda: InterviewProcessor(
                 monitor
             ),
@@ -176,14 +215,13 @@ def show_interview_page():
         )
 
         st.caption(
-            "Start the camera and allow browser camera access. "
+            "Allow camera access in your browser. "
             "Stop the camera when the interview ends."
         )
 
         st.divider()
 
         if st.button("Refresh Interview Report"):
-            
             st.rerun()
 
         events = monitor.get_events()
@@ -215,12 +253,13 @@ def show_interview_page():
             )
 
         st.caption(
-            "Screenshots are stored temporarily in application "
-            "memory during this session. They are not permanently "
-            "saved."
+            "Captured screenshots are temporarily stored "
+            "in application memory during this session."
         )
 
     else:
         st.warning(
             "Please provide consent before starting the camera."
         )
+
+
