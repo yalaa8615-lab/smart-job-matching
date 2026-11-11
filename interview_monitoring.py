@@ -17,12 +17,37 @@ from streamlit_webrtc import (
     VideoProcessorBase
 )
 
-
-# Model file path
 MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "face_landmarker (3).task"
 )
+
+# Metered TURN configuration
+ICE_SERVERS = [
+    {
+        "urls": ["stun:stun.relay.metered.ca:80"]
+    },
+    {
+        "urls": ["turn:global.relay.metered.ca:80"],
+        "username": "f363667191b616bf8197b5b1",
+        "credential": "13r6iWwyq/QoJYO6"
+    },
+    {
+        "urls": ["turn:global.relay.metered.ca:80?transport=tcp"],
+        "username": "f363667191b616bf8197b5b1",
+        "credential": "13r6iWwyq/QoJYO6"
+    },
+    {
+        "urls": ["turn:global.relay.metered.ca:443"],
+        "username": "f363667191b616bf8197b5b1",
+        "credential": "13r6iWwyq/QoJYO6"
+    },
+    {
+        "urls": ["turns:global.relay.metered.ca:443?transport=tcp"],
+        "username": "f363667191b616bf8197b5b1",
+        "credential": "13r6iWwyq/QoJYO6"
+    }
+]
 
 
 class InterviewMonitor:
@@ -46,7 +71,6 @@ class InterviewMonitor:
 class InterviewProcessor(VideoProcessorBase):
 
     def __init__(self, monitor):
-
         self.monitor = monitor
         self.away_since = None
         self.last_capture = 0
@@ -67,8 +91,6 @@ class InterviewProcessor(VideoProcessorBase):
         except Exception as error:
             raise RuntimeError(
                 f"Could not load Face Landmarker model. "
-                f"File size: {os.path.getsize(MODEL_PATH)} bytes. "
-                f"ZIP valid: {zipfile.is_zipfile(MODEL_PATH)}. "
                 f"Original error: {error}"
             ) from error
 
@@ -182,25 +204,15 @@ def show_interview_page():
         "Looking away is an indicator, not proof of cheating."
     )
 
-    # Check model file
     if not os.path.isfile(MODEL_PATH):
-
         st.error(
             f"Model file not found: {os.path.basename(MODEL_PATH)}"
         )
         st.stop()
 
     if not zipfile.is_zipfile(MODEL_PATH):
-
         st.error(
-            "The model file is not a valid task archive. "
-            "Please upload the original model file."
-        )
-
-        st.write(
-            "File size:",
-            os.path.getsize(MODEL_PATH),
-            "bytes"
+            "The model file is not a valid task archive."
         )
         st.stop()
 
@@ -226,13 +238,7 @@ def show_interview_page():
         key="hire_bath_interview",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration={
-            "iceServers": [
-                {
-                    "urls": [
-                        "stun:stun.l.google.com:19302"
-                    ]
-                }
-            ]
+            "iceServers": ICE_SERVERS
         },
         video_processor_factory=lambda: InterviewProcessor(
             monitor
@@ -264,9 +270,7 @@ def show_interview_page():
     )
 
     if events:
-
         for index, event in enumerate(events):
-
             st.write(
                 f"Event {index + 1} - {event['time']}"
             )
@@ -276,9 +280,7 @@ def show_interview_page():
                 caption="Captured interview frame",
                 width=400
             )
-
     else:
-
         st.success(
             "No looking-away events have been recorded."
         )
@@ -287,7 +289,6 @@ def show_interview_page():
         "Screenshots are temporarily stored in application "
         "memory during this session."
     )
-
 
 
 
