@@ -9,4 +9,5 @@ mediapipe==0.10.21
 streamlit-webrtc
 av
 numpy<2
+reportlab
 
