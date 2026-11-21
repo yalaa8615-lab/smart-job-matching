@@ -6,10 +6,10 @@ sentence-transformers
 scikit-learn
 opencv-python-headless==4.11.0.86
 mediapipe==0.10.21
-streamlit-webrtc
+streamlit>=1.41.0
 av
 numpy<2
 reportlab
 openai
-streamlit>=1.41.0
+
 
