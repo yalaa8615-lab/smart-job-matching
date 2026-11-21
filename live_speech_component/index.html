@@ -1,0 +1,148 @@
+
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+html,body{margin:0;padding:0;font-family:Arial,sans-serif;background:transparent;color:inherit}
+#status{font-size:13px;margin:4px 0;color:#555}
+</style>
+</head>
+<body>
+<div id="status">Speech recognition is ready.</div>
+<script>
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let active = false;
+let currentLanguage = "en-US";
+let finalTranscript = "";
+let interimTranscript = "";
+let lastStatus = "ready";
+let lastSent = "";
+let started = false;
+let componentReadySent = false;
+
+function sendValue(status) {
+  const value = {final: finalTranscript, interim: interimTranscript, status: status || lastStatus};
+  const serialized = JSON.stringify(value);
+  if (serialized === lastSent) return;
+  lastSent = serialized;
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:setComponentValue",
+    value: value,
+    dataType: "json"
+  }, "*");
+}
+
+function setFrameHeight() {
+  window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:setFrameHeight",height:36},"*");
+}
+
+function stopRecognition() {
+  active = false;
+  if (recognition) {
+    try { recognition.stop(); } catch(e) {}
+  }
+  started = false;
+}
+
+function startRecognition(language, initialText) {
+  if (!SpeechRecognition) {
+    lastStatus = "unsupported";
+    document.getElementById("status").textContent = "Use Google Chrome or Microsoft Edge for live speech recognition.";
+    sendValue(lastStatus);
+    return;
+  }
+
+  if (active && recognition && currentLanguage === language) return;
+
+  stopRecognition();
+  active = true;
+  currentLanguage = language;
+  finalTranscript = initialText || "";
+  interimTranscript = "";
+  lastSent = "";
+
+  recognition = new SpeechRecognition();
+  recognition.lang = language;
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    started = true;
+    lastStatus = "listening";
+    document.getElementById("status").textContent = "Listening — speak now. Your words are being transcribed.";
+    sendValue(lastStatus);
+  };
+
+  recognition.onresult = (event) => {
+    interimTranscript = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const text = event.results[i][0].transcript;
+      if (event.results[i].isFinal) finalTranscript += (finalTranscript ? " " : "") + text.trim();
+      else interimTranscript += text;
+    }
+    lastStatus = "listening";
+    sendValue(lastStatus);
+  };
+
+  recognition.onerror = (event) => {
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") lastStatus = "permission_denied";
+    else if (event.error === "no-speech") lastStatus = "no_speech";
+    else lastStatus = "error";
+    document.getElementById("status").textContent = "Speech recognition: " + event.error;
+    sendValue(lastStatus);
+  };
+
+  recognition.onend = () => {
+    started = false;
+    if (active) {
+      setTimeout(() => {
+        if (active && recognition) {
+          try { recognition.start(); } catch(e) {}
+        }
+      }, 250);
+    } else {
+      lastStatus = "stopped";
+      document.getElementById("status").textContent = "Transcription stopped.";
+      sendValue(lastStatus);
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch(e) {
+    lastStatus = "error";
+    document.getElementById("status").textContent = "Could not start speech recognition. Press Start again.";
+    sendValue(lastStatus);
+  }
+}
+
+window.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "streamlit:render") return;
+
+  const args = data.args || {};
+  const shouldBeActive = !!args.active;
+  const language = args.language || "en-US";
+  const initialText = args.initial_text || "";
+
+  if (shouldBeActive) startRecognition(language, initialText);
+  else if (active) stopRecognition();
+
+  setFrameHeight();
+
+  if (!componentReadySent) {
+    window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:componentReady",apiVersion:1},"*");
+    componentReadySent = true;
+  }
+
+  sendValue(lastStatus);
+});
+
+setFrameHeight();
+</script>
+</body>
+</html>
