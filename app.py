@@ -18,6 +18,19 @@ st.set_page_config(
 
 
 # ==============================
+# NAVIGATION - FIXED
+# ==============================
+
+if "navigation" not in st.session_state:
+    st.session_state["navigation"] = "Home"
+
+# Apply page navigation before creating the radio widget
+if "next_page" in st.session_state:
+    next_page = st.session_state.pop("next_page")
+    st.session_state["navigation"] = next_page
+
+
+# ==============================
 # DESIGN
 # ==============================
 
@@ -87,11 +100,8 @@ st.markdown("""
 
 
 # ==============================
-# NAVIGATION
+# SIDEBAR NAVIGATION
 # ==============================
-
-if "navigation" not in st.session_state:
-    st.session_state["navigation"] = "Home"
 
 st.sidebar.markdown("""
 <div style="text-align:center; padding:15px 0 25px 0;">
@@ -384,6 +394,7 @@ if page == "Home":
     col1, col2 = st.columns(2)
 
     with col1:
+
         st.markdown("""
         <div class="service-card">
             <h3>📄 CV Analysis & ATS</h3>
@@ -394,11 +405,15 @@ if page == "Home":
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("Start CV Analysis", use_container_width=True):
-            st.session_state["navigation"] = "CV Analysis"
+        if st.button(
+            "Start CV Analysis",
+            use_container_width=True
+        ):
+            st.session_state["next_page"] = "CV Analysis"
             st.rerun()
 
     with col2:
+
         st.markdown("""
         <div class="service-card">
             <h3>🎥 AI Mock Interview</h3>
@@ -409,8 +424,11 @@ if page == "Home":
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("Start Mock Interview", use_container_width=True):
-            st.session_state["navigation"] = "AI Mock Interview"
+        if st.button(
+            "Start Mock Interview",
+            use_container_width=True
+        ):
+            st.session_state["next_page"] = "AI Mock Interview"
             st.rerun()
 
     st.markdown("---")
@@ -494,10 +512,12 @@ elif page == "CV Analysis":
                         ) + "\n"
 
                     if not cv_text.strip():
+
                         st.error(
                             "No readable text was found in this PDF. "
                             "Please upload a text-based PDF."
                         )
+
                         st.stop()
 
                     model = load_model()
@@ -567,7 +587,6 @@ elif page == "CV Analysis":
 
                     st.session_state["analysis_results"] = df
                     st.session_state["cv_text"] = cv_text
-
                     st.session_state["selected_job"] = df.iloc[0]["Job"]
 
                     detected_job = detect_target_job(cv_text)
@@ -634,6 +653,7 @@ elif page == "CV Analysis":
         col1, col2 = st.columns(2)
 
         with col1:
+
             st.markdown("### ✅ Matched Skills")
 
             matched = selected_result["Matched Skills"]
@@ -645,6 +665,7 @@ elif page == "CV Analysis":
                     st.success(skill)
 
         with col2:
+
             st.markdown("### 📚 Skills to Learn")
 
             missing = selected_result["Missing Skills"]
@@ -659,20 +680,26 @@ elif page == "CV Analysis":
         st.subheader("🚀 Your Next Step")
 
         if selected_result["Missing Skills"] == "None detected":
+
             st.success(
                 "Great! Your CV contains all the listed "
                 "skills for this role. Keep building projects "
                 "to demonstrate your abilities."
             )
+
         else:
+
             st.write(
                 "Focus on learning and practicing these skills:"
             )
+
             st.warning(selected_result["Missing Skills"])
+
             st.write(
                 "Build a small project using these skills "
                 "and add it to your portfolio."
             )
+
 
         # ==============================
         # ATS CHECKER
@@ -703,8 +730,8 @@ elif page == "CV Analysis":
         else:
 
             st.warning(
-                "We couldn't confidently identify a target job "
-                "from your CV. Please select the intended job."
+                "We couldn't identify a target job from your CV. "
+                "Please select the intended job."
             )
 
             target_job = st.selectbox(
@@ -741,14 +768,19 @@ elif page == "CV Analysis":
         st.progress(ats_result["score"] / 100)
 
         if ats_result["score"] >= 80:
+
             st.success(
                 "Your CV has a good result according to this basic ATS check."
             )
+
         elif ats_result["score"] >= 60:
+
             st.warning(
                 "Your CV needs some improvements to better match the target job."
             )
+
         else:
+
             st.error(
                 "Your CV needs improvement before applying for this job."
             )
@@ -762,9 +794,12 @@ elif page == "CV Analysis":
             st.markdown("### ✅ Matched Keywords")
 
             if ats_result["matched_keywords"]:
+
                 for keyword in ats_result["matched_keywords"]:
                     st.success(keyword)
+
             else:
+
                 st.write("No target keywords were detected.")
 
         with ats_col2:
@@ -772,9 +807,12 @@ elif page == "CV Analysis":
             st.markdown("### 📌 Missing Keywords")
 
             if ats_result["missing_keywords"]:
+
                 for keyword in ats_result["missing_keywords"]:
                     st.warning(keyword)
+
             else:
+
                 st.success("All target keywords were detected!")
 
         st.markdown("---")
@@ -801,24 +839,28 @@ elif page == "CV Analysis":
         suggestions = []
 
         if ats_result["missing_keywords"]:
+
             suggestions.append(
                 "Add relevant missing job keywords only when "
                 "they accurately describe your real skills."
             )
 
         if ats_result["missing_sections"]:
+
             suggestions.append(
                 "Consider adding these sections to your CV: "
                 + ", ".join(ats_result["missing_sections"])
             )
 
         if len(cv_text.strip()) < 300:
+
             suggestions.append(
                 "Your CV text is quite short. Add more relevant "
                 "details about your education, skills, and projects."
             )
 
         if not suggestions:
+
             suggestions.append(
                 "Your CV covers the main checks in this basic ATS review. "
                 "Keep your information accurate and up to date."
