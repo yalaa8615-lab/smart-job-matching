@@ -2,186 +2,249 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <style>
-        body {
-            margin: 0;
-            padding: 8px;
-            font-family: Arial, sans-serif;
-            background: transparent;
-            color: inherit;
-        }
-        #status {
-            font-size: 14px;
-            padding: 5px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      margin: 0;
+      padding: 10px;
+      font-family: Arial, sans-serif;
+      background: transparent;
+      color: inherit;
+    }
+    #status {
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    #transcript {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 115px;
+      padding: 10px;
+      border: 1px solid #9996;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .hint {
+      opacity: .7;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+  </style>
 </head>
 <body>
-    <div id="status">Ready to start speech recognition.</div>
+  <div id="status">Ready. Press Start Live Transcription.</div>
+  <div id="transcript">Your spoken words will appear here while you talk.</div>
+  <div class="hint">The final answer is sent to the app when you press Stop Speaking.</div>
 
-    <script>
-        const SpeechRecognition =
-            window.SpeechRecognition || window.webkitSpeechRecognition;
+<script>
+(() => {
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
 
-        let recognition = null;
-        let active = false;
-        let language = "en-US";
-        let finalText = "";
-        let interimText = "";
-        let lastSent = "";
-        let ready = false;
+  const statusEl = document.getElementById("status");
+  const transcriptEl = document.getElementById("transcript");
 
-        function sendToStreamlit(type, extra = {}) {
-            window.parent.postMessage({
-                isStreamlitMessage: true,
-                type: type,
-                ...extra
-            }, "*");
+  let recognition = null;
+  let active = false;
+  let language = "en-US";
+  let finalText = "";
+  let interimText = "";
+  let lastSent = "";
+  let restartTimer = null;
+
+  function post(type, extra = {}) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: type,
+      ...extra
+    }, "*");
+  }
+
+  function renderTranscript() {
+    const text = (
+      finalText +
+      (interimText ? (finalText ? " " : "") + interimText : "")
+    ).trim();
+
+    transcriptEl.textContent =
+      text || "Listening... your spoken words will appear here.";
+  }
+
+  function sendFinal(status) {
+    const value = {
+      final: finalText.trim(),
+      interim: "",
+      status: status
+    };
+
+    const serialized = JSON.stringify(value);
+
+    if (serialized === lastSent) return;
+
+    lastSent = serialized;
+
+    post("streamlit:setComponentValue", {
+      value: value,
+      dataType: "json"
+    });
+  }
+
+  function stopListening(send = true) {
+    active = false;
+
+    if (restartTimer) {
+      clearTimeout(restartTimer);
+      restartTimer = null;
+    }
+
+    if (recognition) {
+      const old = recognition;
+      recognition = null;
+
+      try {
+        old.stop();
+      } catch (e) {}
+    }
+
+    statusEl.textContent = "Transcription stopped.";
+
+    if (send) {
+      sendFinal("stopped");
+    }
+  }
+
+  function startListening(args) {
+    if (!SpeechRecognition) {
+      statusEl.textContent =
+        "Speech recognition is unsupported. Open this app in Chrome or Edge.";
+
+      sendFinal("unsupported");
+      return;
+    }
+
+    const requestedLanguage = args.language || "en-US";
+
+    if (active && recognition && language === requestedLanguage) {
+      return;
+    }
+
+    stopListening(false);
+
+    language = requestedLanguage;
+    finalText = args.initial_text || "";
+    interimText = "";
+    lastSent = "";
+
+    renderTranscript();
+
+    active = true;
+
+    statusEl.textContent = "Starting microphone recognition...";
+
+    function createRecognition() {
+      if (!active) return;
+
+      const rec = new SpeechRecognition();
+      recognition = rec;
+
+      rec.lang = language;
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        if (active) {
+          statusEl.textContent = "Listening — speak now.";
+        }
+      };
+
+      rec.onresult = (event) => {
+        interimText = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const spoken =
+            (event.results[i][0].transcript || "").trim();
+
+          if (event.results[i].isFinal) {
+            if (spoken) {
+              finalText += (finalText ? " " : "") + spoken;
+            }
+          } else {
+            interimText += spoken;
+          }
         }
 
-        function sendValue(status) {
-            const value = {
-                final: finalText,
-                interim: interimText,
-                status: status
-            };
+        renderTranscript();
+      };
 
-            const serialized = JSON.stringify(value);
-            if (serialized === lastSent) return;
+      rec.onerror = (event) => {
+        statusEl.textContent =
+          "Speech recognition: " + event.error;
 
-            lastSent = serialized;
-
-            sendToStreamlit("streamlit:setComponentValue", {
-                value: value,
-                dataType: "json"
-            });
+        if (
+          event.error === "not-allowed" ||
+          event.error === "service-not-allowed"
+        ) {
+          active = false;
+          sendFinal("permission_denied");
         }
+      };
 
-        function startListening(args) {
-            if (!SpeechRecognition) {
-                document.getElementById("status").textContent =
-                    "Speech recognition is not supported. Use Chrome or Edge.";
-                sendValue("unsupported");
-                return;
-            }
+      rec.onend = () => {
+        if (!active) return;
 
-            const requestedLanguage = args.language || "en-US";
+        interimText = "";
+        renderTranscript();
 
-            if (active && recognition && language === requestedLanguage) {
-                return;
-            }
+        restartTimer = setTimeout(() => {
+          if (active) {
+            createRecognition();
+          }
+        }, 350);
+      };
 
-            stopListening();
+      try {
+        rec.start();
+      } catch (e) {
+        statusEl.textContent =
+          "Could not start recognition. Check microphone permission and press Start again.";
+      }
+    }
 
-            language = requestedLanguage;
-            finalText = args.initial_text || "";
-            interimText = "";
-            lastSent = "";
+    createRecognition();
+  }
 
-            recognition = new SpeechRecognition();
-            recognition.lang = language;
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.maxAlternatives = 1;
+  window.addEventListener("message", (event) => {
+    const data = event.data;
 
-            active = true;
+    if (!data || data.type !== "streamlit:render") {
+      return;
+    }
 
-            recognition.onstart = function () {
-                document.getElementById("status").textContent =
-                    "Listening... Speak now.";
-                sendValue("listening");
-            };
+    const args = data.args || {};
 
-            recognition.onresult = function (event) {
-                interimText = "";
+    if (args.active) {
+      startListening(args);
+    } else if (active) {
+      stopListening(true);
+    }
 
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript.trim();
+    post("streamlit:setFrameHeight", {
+      height: 190
+    });
+  });
 
-                    if (event.results[i].isFinal) {
-                        finalText += (finalText ? " " : "") + transcript;
-                    } else {
-                        interimText += transcript;
-                    }
-                }
+  post("streamlit:componentReady", {
+    apiVersion: 1
+  });
 
-                document.getElementById("status").textContent =
-                    "Listening...";
-
-                sendValue("listening");
-            };
-
-            recognition.onerror = function (event) {
-                document.getElementById("status").textContent =
-                    "Recognition error: " + event.error;
-
-                sendValue(event.error === "not-allowed"
-                    ? "permission_denied"
-                    : "error");
-            };
-
-            recognition.onend = function () {
-                if (active) {
-                    setTimeout(function () {
-                        if (active && recognition) {
-                            try {
-                                recognition.start();
-                            } catch (e) {}
-                        }
-                    }, 300);
-                } else {
-                    sendValue("stopped");
-                }
-            };
-
-            try {
-                recognition.start();
-            } catch (error) {
-                document.getElementById("status").textContent =
-                    "Could not start. Press Start again.";
-                sendValue("error");
-            }
-        }
-
-        function stopListening() {
-            active = false;
-
-            if (recognition) {
-                try {
-                    recognition.stop();
-                } catch (e) {}
-            }
-
-            recognition = null;
-        }
-
-        window.addEventListener("message", function (event) {
-            const data = event.data;
-
-            if (!data || data.type !== "streamlit:render") {
-                return;
-            }
-
-            const args = data.args || {};
-
-            if (args.active) {
-                startListening(args);
-            } else if (active) {
-                stopListening();
-            }
-
-            sendToStreamlit("streamlit:setFrameHeight", {
-                height: 45
-            });
-        });
-
-        // Announce readiness immediately so Streamlit can send render data.
-        sendToStreamlit("streamlit:componentReady", {
-            apiVersion: 1
-        });
-
-        ready = true;
-    </script>
+  post("streamlit:setFrameHeight", {
+    height: 190
+  });
+})();
+</script>
 </body>
 </html>
