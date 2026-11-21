@@ -1,9 +1,9 @@
+
 import os
 import time
 import threading
 from datetime import datetime
 from io import BytesIO
-import wave
 from html import escape
 
 import cv2
@@ -11,21 +11,13 @@ import mediapipe as mp
 import pandas as pd
 import streamlit as st
 
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OpenAI = None
-    OPENAI_AVAILABLE = False
-
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
 from streamlit_webrtc import (
     webrtc_streamer,
     WebRtcMode,
-    VideoProcessorBase,
-    AudioProcessorBase
+    VideoProcessorBase
 )
 
 from reportlab.lib import colors
@@ -56,6 +48,13 @@ except ImportError:
 # =====================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Browser speech recognition component (Chrome / Edge)
+import streamlit.components.v1 as components
+LIVE_SPEECH = components.declare_component(
+    "hire_bath_live_speech",
+    path=os.path.join(BASE_DIR, "live_speech_component")
+)
 
 MODEL_PATH = os.path.join(
     BASE_DIR,
@@ -429,75 +428,11 @@ class InterviewProcessor(VideoProcessorBase):
 
 
 # =====================================
-# 4A. INTERVIEW AUDIO CAPTURE
+# 4A. LIVE SPEECH-TO-TEXT
 # =====================================
-
-class InterviewAudioRecorder:
-    """Thread-safe audio buffer shared by the WebRTC audio processor and UI."""
-
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.active = False
-        self.frames = []
-        self.sample_rate = 16000
-
-    def start(self):
-        with self.lock:
-            self.frames = []
-            self.sample_rate = 16000
-            self._resampler = None
-            self.active = True
-
-    def add_frame(self, frame):
-        with self.lock:
-            if not self.active:
-                return
-        try:
-            import av
-            resampler = getattr(self, "_resampler", None)
-            if resampler is None:
-                resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
-                self._resampler = resampler
-            converted_frames = resampler.resample(frame)
-            chunks = []
-            for converted in converted_frames:
-                chunks.append(converted.to_ndarray().astype("int16", copy=False).tobytes())
-                self.sample_rate = converted.sample_rate or 16000
-            if chunks:
-                with self.lock:
-                    if self.active:
-                        self.frames.extend(chunks)
-        except Exception:
-            # Audio conversion errors are surfaced as an empty recording on stop.
-            return
-
-    def stop(self):
-        with self.lock:
-            self.active = False
-            chunks = list(self.frames)
-            sample_rate = self.sample_rate
-            self.frames = []
-        pcm = b"".join(chunks)
-        if not pcm:
-            return None
-        output = BytesIO()
-        with wave.open(output, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(pcm)
-        return output.getvalue()
-
-
-class InterviewAudioProcessor(AudioProcessorBase):
-    """Receives microphone frames from the same WebRTC session as the camera."""
-
-    def __init__(self, recorder):
-        self.recorder = recorder
-
-    def recv(self, frame):
-        self.recorder.add_frame(frame)
-        return frame
+# Speech recognition runs in the interviewer's browser using the Web Speech API.
+# It displays interim words while the candidate is speaking and does not require
+# OpenAI API credits. The browser currently needs Chrome or Microsoft Edge.
 
 
 # =====================================
@@ -734,52 +669,14 @@ def create_pdf_report(job, answers, events):
 
 
 # =====================================
-# SPEECH-TO-TEXT
-# =====================================
-
-def transcribe_interview_audio(audio_bytes):
-    """Transcribe Arabic or English speech; the model detects the language."""
-    if not OPENAI_AVAILABLE:
-        raise RuntimeError(
-            "The OpenAI package is missing. Add openai to requirements.txt."
-        )
-
-    api_key = None
-    try:
-        api_key = st.secrets.get("OPENAI_API_KEY")
-    except Exception:
-        api_key = os.getenv("OPENAI_API_KEY")
-
-    if not api_key:
-        api_key = os.getenv("OPENAI_API_KEY")
-
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not configured. Add it to Streamlit Secrets."
-        )
-
-    client = OpenAI(api_key=api_key)
-    result = client.audio.transcriptions.create(
-        model="gpt-4o-mini-transcribe",
-        file=("interview_answer.wav", audio_bytes, "audio/wav")
-    )
-
-    transcript = (getattr(result, "text", "") or "").strip()
-    if not transcript:
-        raise RuntimeError("No speech was detected. Please record your answer again.")
-
-    return transcript
-
-
-# =====================================
 # 7. INTERVIEW QUESTIONS PAGE
 # =====================================
 
-def show_questions_section(audio_recorder, camera_running):
+def show_questions_section(camera_running):
 
     st.divider()
     st.header("AI Interview Questions")
-    st.write("Answer each question aloud while your camera and microphone are connected.")
+    st.write("Your camera stays on while your spoken answer appears on screen in real time.")
 
     if not camera_running:
         st.info("Start the camera and microphone above to begin answering interview questions.")
@@ -795,8 +692,6 @@ def show_questions_section(audio_recorder, camera_running):
     if "interview_previous_job" not in st.session_state:
         st.session_state.interview_previous_job = selected_job
     if st.session_state.interview_previous_job != selected_job:
-        if audio_recorder.active:
-            audio_recorder.stop()
         st.session_state.interview_question_index = 0
         st.session_state.interview_previous_job = selected_job
 
@@ -811,69 +706,102 @@ def show_questions_section(audio_recorder, camera_running):
     question = questions[index]
     st.subheader(question["question"])
 
-    st.info("Your answer is captured from the microphone connected to the live camera session. No typing is required.")
-    audio_consent = st.checkbox(
-        "I consent to recording my spoken answers and sending them to the transcription service.",
-        key="interview_audio_consent"
+    st.info("Choose the language you are speaking. Your words will appear below while you talk.")
+    language = st.selectbox(
+        "Spoken language",
+        options=["English", "العربية"],
+        format_func=lambda value: "English" if value == "English" else "العربية",
+        key=f"speech_language_{selected_job}_{index}"
     )
+    language_code = "en-US" if language == "English" else "ar-EG"
 
-    transcript_key = f"interview_transcript_{selected_job}_{index}"
+    transcript_key = f"interview_live_transcript_{selected_job}_{index}"
     if transcript_key not in st.session_state:
         st.session_state[transcript_key] = answers.get(index, "")
 
-    if not audio_consent:
-        st.warning("Give audio consent before recording an answer.")
-    elif audio_recorder.active:
-        st.error("Recording your answer now. Speak clearly, then press Stop & Transcribe.")
-        if st.button("Stop & Transcribe Answer", type="primary", key=f"stop_record_{selected_job}_{index}"):
-            audio_bytes = audio_recorder.stop()
-            if not audio_bytes:
-                st.error("No audio frames were received. Check microphone permission and try again.")
-            else:
-                with st.spinner("Transcribing your answer in Arabic or English..."):
-                    try:
-                        transcript = transcribe_interview_audio(audio_bytes)
-                        st.session_state[transcript_key] = transcript
-                        answers[index] = transcript
-                        st.success("Your spoken answer was transcribed and saved.")
-                    except Exception as error:
-                        st.error(f"Speech-to-text failed: {error}")
+    speech_active_key = f"interview_speech_active_{selected_job}_{index}"
+    if speech_active_key not in st.session_state:
+        st.session_state[speech_active_key] = False
+
+    col_start, col_stop = st.columns(2)
+    with col_start:
+        if st.button(
+            "Start Live Transcription",
+            type="primary",
+            disabled=st.session_state[speech_active_key],
+            key=f"start_live_speech_{selected_job}_{index}"
+        ):
+            st.session_state[speech_active_key] = True
             st.rerun()
-    else:
-        if st.button("Start Answer Recording", type="primary", key=f"start_record_{selected_job}_{index}"):
-            audio_recorder.start()
+    with col_stop:
+        if st.button(
+            "Stop Speaking",
+            disabled=not st.session_state[speech_active_key],
+            key=f"stop_live_speech_{selected_job}_{index}"
+        ):
+            st.session_state[speech_active_key] = False
             st.rerun()
 
+    speech_result = LIVE_SPEECH(
+        active=st.session_state[speech_active_key],
+        language=language_code,
+        initial_text=st.session_state[transcript_key],
+        key=f"live_speech_{selected_job}_{index}"
+    )
+
+    if isinstance(speech_result, dict):
+        final_text = speech_result.get("final", "") or ""
+        interim_text = speech_result.get("interim", "") or ""
+        status = speech_result.get("status", "") or ""
+        combined_text = (final_text + (" " + interim_text if interim_text else "")).strip()
+        if combined_text:
+            st.session_state[transcript_key] = combined_text
+            answers[index] = combined_text
+        if status == "unsupported":
+            st.error("Live speech recognition is not supported in this browser. Please open the app in Google Chrome or Microsoft Edge.")
+        elif status == "permission_denied":
+            st.error("Microphone permission was blocked. Allow microphone access in your browser, then try again.")
+        elif status == "no_speech":
+            st.warning("No speech detected yet. Check your microphone and speak clearly.")
+        elif status == "error":
+            st.warning("Speech recognition stopped unexpectedly. Press Start Live Transcription to try again.")
+
     current_transcript = st.session_state.get(transcript_key, "")
+    st.subheader("Your answer — live transcript")
     if current_transcript:
-        st.subheader("Your spoken answer (transcribed)")
-        st.write(current_transcript)
-        st.caption("This answer was generated from your voice. No typing is needed.")
-        if st.button(
-            "Save Answer & Next" if index < len(questions) - 1 else "Save Final Answer",
-            type="primary",
-            key=f"save_transcript_{selected_job}_{index}"
-        ):
-            answers[index] = current_transcript.strip()
-            if index < len(questions) - 1:
-                st.session_state.interview_question_index += 1
-            st.rerun()
+        st.text_area(
+            "Words recognized from your voice",
+            value=current_transcript,
+            height=180,
+            disabled=True,
+            key=f"transcript_display_{selected_job}_{index}"
+        )
+    else:
+        st.info("Your spoken words will appear here. Press Start Live Transcription and begin speaking.")
+
+    if st.button(
+        "Save Answer & Next" if index < len(questions) - 1 else "Save Final Answer",
+        type="primary",
+        disabled=not current_transcript.strip(),
+        key=f"save_live_transcript_{selected_job}_{index}"
+    ):
+        st.session_state[speech_active_key] = False
+        answers[index] = current_transcript.strip()
+        if index < len(questions) - 1:
+            st.session_state.interview_question_index += 1
+        st.rerun()
 
     col1, col2 = st.columns(2)
     with col1:
         if index > 0 and st.button("Previous Question", key=f"previous_{selected_job}_{index}"):
-            if audio_recorder.active:
-                st.warning("Stop the current recording before changing questions.")
-            else:
-                st.session_state.interview_question_index -= 1
-                st.rerun()
+            st.session_state[speech_active_key] = False
+            st.session_state.interview_question_index -= 1
+            st.rerun()
     with col2:
         if index < len(questions) - 1 and st.button("Skip Question", key=f"skip_{selected_job}_{index}"):
-            if audio_recorder.active:
-                st.warning("Stop the current recording before changing questions.")
-            else:
-                st.session_state.interview_question_index += 1
-                st.rerun()
+            st.session_state[speech_active_key] = False
+            st.session_state.interview_question_index += 1
+            st.rerun()
 
     answered_count = sum(1 for value in answers.values() if value.strip())
     st.caption(f"Answers saved: {answered_count}/{len(questions)}")
@@ -920,12 +848,8 @@ def show_interview_page():
 
     monitor = st.session_state.interview_monitor
 
-    if "interview_audio_recorder" not in st.session_state:
-        st.session_state.interview_audio_recorder = InterviewAudioRecorder()
-    audio_recorder = st.session_state.interview_audio_recorder
-
     consent = st.checkbox(
-        "I consent to camera monitoring and microphone recording for my interview."
+        "I consent to camera monitoring and using my microphone for live speech recognition during this interview."
     )
 
     camera_running = False
@@ -936,7 +860,6 @@ def show_interview_page():
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIGURATION,
             video_processor_factory=lambda: InterviewProcessor(monitor),
-            audio_processor_factory=lambda: InterviewAudioProcessor(audio_recorder),
             media_stream_constraints={"video": True, "audio": True},
             async_processing=True
         )
@@ -945,12 +868,12 @@ def show_interview_page():
             st.success("Camera and microphone connection is active.")
         else:
             st.warning("Start the live camera above and allow both camera and microphone permissions.")
-        st.caption("The camera stays on during the interview. Audio is buffered only while you press Start Answer Recording.")
+        st.caption("Camera and microphone stay connected during the interview. Live transcription runs in your browser.")
     else:
         st.warning("Please provide consent before starting the interview camera and microphone.")
 
     # Questions are enabled only while the shared audio/video session is active.
-    show_questions_section(audio_recorder, camera_running)
+    show_questions_section(camera_running)
 
     # Monitoring report
     st.divider()
