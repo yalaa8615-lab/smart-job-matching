@@ -12,20 +12,139 @@ from interview_monitoring import show_interview_page
 st.set_page_config(
     page_title="HIRE BATH",
     page_icon="💼",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 
 # ==============================
-# MAIN NAVIGATION
+# DESIGN / CUSTOM STYLE
 # ==============================
 
-st.sidebar.title("💼 HIRE BATH")
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #F5F7FB;
+    }
+
+    [data-testid="stSidebar"] {
+        background-color: #172554;
+    }
+
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {
+        background-color: transparent;
+        padding: 9px 12px;
+        border-radius: 8px;
+    }
+
+    .main-header {
+        background: linear-gradient(120deg, #172554, #2563EB);
+        padding: 35px;
+        border-radius: 18px;
+        color: white;
+        margin-bottom: 25px;
+    }
+
+    .main-header h1 {
+        color: white;
+        font-size: 38px;
+        margin-bottom: 8px;
+    }
+
+    .main-header p {
+        color: #DBEAFE;
+        font-size: 17px;
+    }
+
+    .section-title {
+        color: #172554;
+        font-size: 25px;
+        font-weight: 700;
+        margin-top: 15px;
+        margin-bottom: 15px;
+    }
+
+    .service-card {
+        background-color: white;
+        padding: 24px;
+        border-radius: 15px;
+        border: 1px solid #E2E8F0;
+        min-height: 190px;
+        margin-bottom: 15px;
+    }
+
+    .service-card h3 {
+        color: #172554;
+        font-size: 20px;
+    }
+
+    .service-card p {
+        color: #64748B;
+        font-size: 15px;
+    }
+
+    .stButton > button {
+        border-radius: 9px;
+        font-weight: 600;
+        min-height: 42px;
+    }
+
+    [data-testid="stMetric"] {
+        background-color: white;
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+    }
+
+    [data-testid="stFileUploader"] {
+        background-color: white;
+        border-radius: 12px;
+        padding: 15px;
+    }
+
+    h1, h2, h3 {
+        color: #172554;
+    }
+
+    .footer {
+        text-align: center;
+        color: #94A3B8;
+        padding: 25px;
+        font-size: 13px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ==============================
+# NAVIGATION
+# ==============================
+
+if "navigation" not in st.session_state:
+    st.session_state["navigation"] = "Home"
+
+st.sidebar.markdown("""
+<div style="text-align:center; padding:15px 0 25px 0;">
+    <div style="font-size:38px;">💼</div>
+    <h2 style="color:white; margin:5px;">HIRE BATH</h2>
+    <p style="color:#BFDBFE; font-size:12px;">
+        Your Career Starts Here
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 page = st.sidebar.radio(
-    "Navigation",
-    ["CV Analysis", "AI Mock Interview"]
+    "MAIN MENU",
+    ["Home", "CV Analysis", "AI Mock Interview"],
+    key="navigation"
 )
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Smart Job Matching Platform")
 
 
 # ==============================
@@ -131,34 +250,130 @@ def load_model():
 
 
 # ==============================
+# HOME PAGE
+# ==============================
+
+if page == "Home":
+
+    st.markdown("""
+    <div class="main-header">
+        <h1>Welcome to HIRE BATH 👋</h1>
+        <p>
+            Smart Job Matching & Skill Gap Analysis
+        </p>
+        <p>
+            Discover your skills, find suitable career opportunities,
+            and prepare yourself for the job market.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="section-title">Explore Our Services</div>',
+        unsafe_allow_html=True
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("""
+        <div class="service-card">
+            <h3>📄 CV Analysis</h3>
+            <p>
+                Upload your CV and let our AI analyze your skills
+                and discover suitable job opportunities.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("Start CV Analysis", use_container_width=True):
+            st.session_state["navigation"] = "CV Analysis"
+            st.rerun()
+
+    with col2:
+        st.markdown("""
+        <div class="service-card">
+            <h3>🎥 AI Mock Interview</h3>
+            <p>
+                Practice your interview skills, answer questions,
+                and get ready for real job interviews.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("Start Mock Interview", use_container_width=True):
+            st.session_state["navigation"] = "AI Mock Interview"
+            st.rerun()
+
+    st.markdown("---")
+
+    st.markdown(
+        '<div class="section-title">How HIRE BATH Works</div>',
+        unsafe_allow_html=True
+    )
+
+    step1, step2, step3 = st.columns(3)
+
+    with step1:
+        st.markdown("""
+        <div class="service-card">
+            <h3>01. Upload</h3>
+            <p>Upload your CV to start your career analysis.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with step2:
+        st.markdown("""
+        <div class="service-card">
+            <h3>02. Analyze</h3>
+            <p>Discover your skills and match them with job requirements.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with step3:
+        st.markdown("""
+        <div class="service-card">
+            <h3>03. Improve</h3>
+            <p>Identify missing skills and prepare for your next opportunity.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="footer">
+        HIRE BATH | Smart Job Matching Platform
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ==============================
 # PAGE 1: CV ANALYSIS
 # ==============================
 
-if page == "CV Analysis":
+elif page == "CV Analysis":
 
-    st.title("💼 HIRE BATH")
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 CV Analysis</h1>
+        <p>
+            Analyze your CV, discover your strengths,
+            and find the jobs that match your skills.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.subheader(
-        "Smart Job Matching & Skill Gap Analysis"
-    )
-
-    st.write(
-        "Find suitable jobs, discover missing skills, "
-        "and plan your next career step."
-    )
-
-    st.divider()
+    st.subheader("Upload Your CV")
 
     uploaded_file = st.file_uploader(
-        "Upload your CV (PDF)",
+        "Choose your CV in PDF format",
         type=["pdf"]
     )
 
     if uploaded_file is not None:
 
         if st.button(
-            "Analyze My CV",
-            type="primary"
+            "🚀 Analyze My CV",
+            type="primary",
+            use_container_width=True
         ):
 
             with st.spinner(
@@ -262,10 +477,8 @@ if page == "CV Analysis":
                         ascending=False
                     ).reset_index(drop=True)
 
-                    # Save results between Streamlit reruns
                     st.session_state["analysis_results"] = df
 
-                    # Reset selected job for new analysis
                     st.session_state["selected_job"] = df.iloc[0]["Job"]
 
                     st.success(
@@ -289,9 +502,9 @@ if page == "CV Analysis":
 
         df = st.session_state["analysis_results"]
 
-        st.divider()
+        st.markdown("---")
 
-        st.subheader("Your Best Job Match")
+        st.subheader("🏆 Your Best Job Match")
 
         best_job = df.iloc[0]
 
@@ -300,7 +513,7 @@ if page == "CV Analysis":
             value=f'{best_job["Match Score (%)"]}%'
         )
 
-        st.subheader("Job Matching Results")
+        st.subheader("📊 Job Matching Results")
 
         st.dataframe(
             df,
@@ -314,9 +527,9 @@ if page == "CV Analysis":
             "requirements. Neither score guarantees employment."
         )
 
-        st.divider()
+        st.markdown("---")
 
-        st.subheader("Skill Gap Analysis")
+        st.subheader("🎯 Skill Gap Analysis")
 
         selected_job = st.selectbox(
             "Choose a job to inspect",
@@ -345,7 +558,7 @@ if page == "CV Analysis":
             else:
 
                 for skill in matched.split(", "):
-                    st.write(f"✅ {skill}")
+                    st.success(skill)
 
         with col2:
 
@@ -355,22 +568,22 @@ if page == "CV Analysis":
 
             if missing == "None detected":
 
-                st.write(
+                st.success(
                     "All listed skills were detected!"
                 )
 
             else:
 
                 for skill in missing.split(", "):
-                    st.write(f"📌 {skill}")
+                    st.info(skill)
 
-        st.divider()
+        st.markdown("---")
 
-        st.subheader("Your Next Step")
+        st.subheader("🚀 Your Next Step")
 
         if selected_result["Missing Skills"] == "None detected":
 
-            st.info(
+            st.success(
                 "Great! Your CV contains all the listed "
                 "skills for this role. Keep building projects "
                 "to demonstrate your abilities."
@@ -382,7 +595,7 @@ if page == "CV Analysis":
                 "Focus on learning and practicing these skills:"
             )
 
-            st.write(
+            st.warning(
                 selected_result["Missing Skills"]
             )
 
