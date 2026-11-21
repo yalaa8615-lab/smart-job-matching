@@ -1,4 +1,3 @@
-
 import os
 import time
 import threading
@@ -10,6 +9,13 @@ import cv2
 import mediapipe as mp
 import pandas as pd
 import streamlit as st
+
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OpenAI = None
+    OPENAI_AVAILABLE = False
 
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
@@ -654,6 +660,44 @@ def create_pdf_report(job, answers, events):
 
 
 # =====================================
+# SPEECH-TO-TEXT
+# =====================================
+
+def transcribe_interview_audio(audio_bytes):
+    """Transcribe Arabic or English speech; the model detects the language."""
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError(
+            "The OpenAI package is missing. Add openai to requirements.txt."
+        )
+
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not configured. Add it to Streamlit Secrets."
+        )
+
+    client = OpenAI(api_key=api_key)
+    result = client.audio.transcriptions.create(
+        model="gpt-4o-mini-transcribe",
+        file=("interview_answer.wav", audio_bytes, "audio/wav")
+    )
+
+    transcript = (getattr(result, "text", "") or "").strip()
+    if not transcript:
+        raise RuntimeError("No speech was detected. Please record your answer again.")
+
+    return transcript
+
+
+# =====================================
 # 7. INTERVIEW QUESTIONS PAGE
 # =====================================
 
@@ -711,35 +755,58 @@ def show_questions_section():
 
     st.subheader(question["question"])
 
-    answer_key = f"interview_answer_{selected_job}_{index}"
+    st.write("Answer by speaking. The system will detect Arabic or English automatically.")
 
-    if answer_key not in st.session_state:
-        st.session_state[answer_key] = answers.get(index, "")
+    audio_key = f"interview_audio_{selected_job}_{index}"
+    transcript_key = f"interview_transcript_{selected_job}_{index}"
 
-    with st.form(key=f"question_form_{selected_job}_{index}"):
+    audio_consent = st.checkbox(
+        "I consent to recording my answer and sending the audio to the transcription service.",
+        key="interview_audio_consent"
+    )
 
-        st.text_area(
-            "Your Answer",
-            key=answer_key,
-            height=160,
-            placeholder="Write your answer here..."
-        )
+    if transcript_key not in st.session_state:
+        st.session_state[transcript_key] = answers.get(index, "")
 
-        submitted = st.form_submit_button(
-            "Save Answer & Next"
-            if index < len(questions) - 1
-            else "Save Final Answer"
-        )
+    audio_value = st.audio_input(
+        "Record your answer using the microphone",
+        key=audio_key,
+        disabled=not audio_consent
+    )
 
-        if submitted:
+    if audio_value is not None:
+        st.audio(audio_value, format="audio/wav")
 
-            current_answer = st.session_state[answer_key].strip()
+        if st.button(
+            "Convert Speech to Text & Save Answer",
+            key=f"transcribe_{selected_job}_{index}"
+        ):
+            audio_bytes = audio_value.getvalue()
+            if not audio_bytes:
+                st.warning("No audio was recorded. Please try again.")
+            else:
+                with st.spinner("Transcribing your answer..."):
+                    try:
+                        transcript = transcribe_interview_audio(audio_bytes)
+                        st.session_state[transcript_key] = transcript
+                        answers[index] = transcript
+                        st.success("Your spoken answer was converted and saved.")
+                    except Exception as error:
+                        st.error(f"Speech-to-text failed: {error}")
 
-            answers[index] = current_answer
+    current_transcript = st.session_state.get(transcript_key, "")
+    if current_transcript:
+        st.subheader("Your Answer (automatically transcribed)")
+        st.write(current_transcript)
+        st.caption("This text was generated from your voice. You do not need to type your answer.")
 
+        if st.button(
+            "Save Answer & Next" if index < len(questions) - 1 else "Save Final Answer",
+            key=f"save_transcript_{selected_job}_{index}"
+        ):
+            answers[index] = current_transcript.strip()
             if index < len(questions) - 1:
                 st.session_state.interview_question_index += 1
-
             st.rerun()
 
     col1, col2 = st.columns(2)
@@ -999,5 +1066,4 @@ def show_interview_page():
         "The report and screenshots are temporarily stored in "
         "application memory during this session."
     )
-
 
