@@ -18,7 +18,7 @@ st.set_page_config(
 
 
 # ==============================
-# DESIGN / CUSTOM STYLE
+# DESIGN
 # ==============================
 
 st.markdown("""
@@ -35,12 +35,6 @@ st.markdown("""
         color: white !important;
     }
 
-    [data-testid="stSidebar"] [data-testid="stRadio"] label {
-        background-color: transparent;
-        padding: 9px 12px;
-        border-radius: 8px;
-    }
-
     .main-header {
         background: linear-gradient(120deg, #172554, #2563EB);
         padding: 35px;
@@ -51,46 +45,29 @@ st.markdown("""
 
     .main-header h1 {
         color: white;
-        font-size: 38px;
-        margin-bottom: 8px;
+        font-size: 36px;
     }
 
     .main-header p {
         color: #DBEAFE;
-        font-size: 17px;
-    }
-
-    .section-title {
-        color: #172554;
-        font-size: 25px;
-        font-weight: 700;
-        margin-top: 15px;
-        margin-bottom: 15px;
+        font-size: 16px;
     }
 
     .service-card {
         background-color: white;
-        padding: 24px;
+        padding: 22px;
         border-radius: 15px;
         border: 1px solid #E2E8F0;
-        min-height: 190px;
+        min-height: 170px;
         margin-bottom: 15px;
     }
 
     .service-card h3 {
         color: #172554;
-        font-size: 20px;
     }
 
     .service-card p {
         color: #64748B;
-        font-size: 15px;
-    }
-
-    .stButton > button {
-        border-radius: 9px;
-        font-weight: 600;
-        min-height: 42px;
     }
 
     [data-testid="stMetric"] {
@@ -100,21 +77,10 @@ st.markdown("""
         border: 1px solid #E2E8F0;
     }
 
-    [data-testid="stFileUploader"] {
-        background-color: white;
-        border-radius: 12px;
-        padding: 15px;
-    }
-
-    h1, h2, h3 {
-        color: #172554;
-    }
-
     .footer {
         text-align: center;
         color: #94A3B8;
         padding: 25px;
-        font-size: 13px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -220,6 +186,34 @@ skill_aliases = {
 
 
 # ==============================
+# ATS KEYWORDS
+# ==============================
+
+ats_job_keywords = {
+    "Front-End Developer": [
+        "HTML", "CSS", "JavaScript", "React",
+        "Responsive Design", "Git", "API"
+    ],
+    "Python Back-End Developer": [
+        "Python", "Django", "Flask", "SQL",
+        "REST API", "Git", "Backend"
+    ],
+    "Data Analyst": [
+        "Python", "Pandas", "SQL", "Excel",
+        "Power BI", "Data Visualization", "Statistics"
+    ],
+    "Machine Learning Engineer": [
+        "Python", "Machine Learning", "TensorFlow",
+        "Deep Learning", "Scikit-learn", "Data Science"
+    ],
+    "UI/UX Designer": [
+        "Figma", "User Research", "Wireframing",
+        "Prototyping", "UI Design", "UX Design"
+    ]
+}
+
+
+# ==============================
 # HELPER FUNCTIONS
 # ==============================
 
@@ -242,6 +236,125 @@ def skill_is_present(skill, cv_text):
     return False
 
 
+def detect_target_job(cv_text):
+
+    normalized_cv = normalize_text(cv_text)
+
+    job_aliases = {
+        "Front-End Developer": [
+            "front end developer",
+            "frontend developer",
+            "front end"
+        ],
+        "Python Back-End Developer": [
+            "python back end developer",
+            "python backend developer",
+            "backend developer",
+            "back end developer"
+        ],
+        "Data Analyst": [
+            "data analyst",
+            "data analysis"
+        ],
+        "Machine Learning Engineer": [
+            "machine learning engineer",
+            "ml engineer"
+        ],
+        "UI/UX Designer": [
+            "ui ux designer",
+            "ui designer",
+            "ux designer"
+        ]
+    }
+
+    scores = {}
+
+    for job, aliases in job_aliases.items():
+        scores[job] = sum(
+            1 for alias in aliases
+            if alias in normalized_cv
+        )
+
+    best_job = max(scores, key=scores.get)
+
+    if scores[best_job] == 0:
+        return None
+
+    return best_job
+
+
+def calculate_ats_score(cv_text, target_job):
+
+    keywords = ats_job_keywords[target_job]
+
+    matched_keywords = [
+        keyword for keyword in keywords
+        if skill_is_present(keyword, cv_text)
+    ]
+
+    missing_keywords = [
+        keyword for keyword in keywords
+        if keyword not in matched_keywords
+    ]
+
+    sections = {
+        "Contact Information": [
+            "email", "phone", "linkedin"
+        ],
+        "Education": [
+            "education", "university", "degree"
+        ],
+        "Experience": [
+            "experience", "work experience", "employment"
+        ],
+        "Skills": [
+            "skills", "technical skills"
+        ],
+        "Projects": [
+            "projects", "personal projects"
+        ]
+    }
+
+    normalized_cv = normalize_text(cv_text)
+
+    found_sections = [
+        section for section, aliases in sections.items()
+        if any(
+            normalize_text(alias) in normalized_cv
+            for alias in aliases
+        )
+    ]
+
+    missing_sections = [
+        section for section in sections
+        if section not in found_sections
+    ]
+
+    keyword_score = (
+        len(matched_keywords) / len(keywords)
+    ) * 60
+
+    section_score = (
+        len(found_sections) / len(sections)
+    ) * 30
+
+    readability_score = (
+        10 if len(cv_text.strip()) >= 300 else 0
+    )
+
+    total_score = round(
+        keyword_score + section_score + readability_score
+    )
+
+    return {
+        "score": total_score,
+        "matched_keywords": matched_keywords,
+        "missing_keywords": missing_keywords,
+        "found_sections": found_sections,
+        "missing_sections": missing_sections
+    }
+
+
 @st.cache_resource
 def load_model():
     return SentenceTransformer(
@@ -258,9 +371,7 @@ if page == "Home":
     st.markdown("""
     <div class="main-header">
         <h1>Welcome to HIRE BATH 👋</h1>
-        <p>
-            Smart Job Matching & Skill Gap Analysis
-        </p>
+        <p>Smart Job Matching & Skill Gap Analysis</p>
         <p>
             Discover your skills, find suitable career opportunities,
             and prepare yourself for the job market.
@@ -268,20 +379,17 @@ if page == "Home":
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown(
-        '<div class="section-title">Explore Our Services</div>',
-        unsafe_allow_html=True
-    )
+    st.subheader("Explore Our Services")
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("""
         <div class="service-card">
-            <h3>📄 CV Analysis</h3>
+            <h3>📄 CV Analysis & ATS</h3>
             <p>
-                Upload your CV and let our AI analyze your skills
-                and discover suitable job opportunities.
+                Analyze your CV, check ATS compatibility,
+                and discover suitable jobs.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -295,8 +403,8 @@ if page == "Home":
         <div class="service-card">
             <h3>🎥 AI Mock Interview</h3>
             <p>
-                Practice your interview skills, answer questions,
-                and get ready for real job interviews.
+                Practice interview questions and prepare
+                for real job interviews.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -306,11 +414,7 @@ if page == "Home":
             st.rerun()
 
     st.markdown("---")
-
-    st.markdown(
-        '<div class="section-title">How HIRE BATH Works</div>',
-        unsafe_allow_html=True
-    )
+    st.subheader("How HIRE BATH Works")
 
     step1, step2, step3 = st.columns(3)
 
@@ -318,7 +422,7 @@ if page == "Home":
         st.markdown("""
         <div class="service-card">
             <h3>01. Upload</h3>
-            <p>Upload your CV to start your career analysis.</p>
+            <p>Upload your CV in PDF format.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -326,7 +430,7 @@ if page == "Home":
         st.markdown("""
         <div class="service-card">
             <h3>02. Analyze</h3>
-            <p>Discover your skills and match them with job requirements.</p>
+            <p>Check your skills, ATS score, and job matching.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -334,29 +438,28 @@ if page == "Home":
         st.markdown("""
         <div class="service-card">
             <h3>03. Improve</h3>
-            <p>Identify missing skills and prepare for your next opportunity.</p>
+            <p>Discover missing skills and improve your CV.</p>
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="footer">
-        HIRE BATH | Smart Job Matching Platform
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="footer">HIRE BATH | Smart Job Matching Platform</div>',
+        unsafe_allow_html=True
+    )
 
 
 # ==============================
-# PAGE 1: CV ANALYSIS
+# PAGE 1: CV ANALYSIS + ATS
 # ==============================
 
 elif page == "CV Analysis":
 
     st.markdown("""
     <div class="main-header">
-        <h1>📄 CV Analysis</h1>
+        <h1>📄 CV Analysis & ATS Checker</h1>
         <p>
-            Analyze your CV, discover your strengths,
-            and find the jobs that match your skills.
+            Analyze your CV, discover matching jobs,
+            and check your ATS compatibility.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -365,7 +468,8 @@ elif page == "CV Analysis":
 
     uploaded_file = st.file_uploader(
         "Choose your CV in PDF format",
-        type=["pdf"]
+        type=["pdf"],
+        key="cv_upload"
     )
 
     if uploaded_file is not None:
@@ -376,9 +480,7 @@ elif page == "CV Analysis":
             use_container_width=True
         ):
 
-            with st.spinner(
-                "Reading and analyzing your CV..."
-            ):
+            with st.spinner("Reading and analyzing your CV..."):
 
                 try:
 
@@ -392,12 +494,10 @@ elif page == "CV Analysis":
                         ) + "\n"
 
                     if not cv_text.strip():
-
                         st.error(
                             "No readable text was found in this PDF. "
                             "Please upload a text-based PDF."
                         )
-
                         st.stop()
 
                     model = load_model()
@@ -412,7 +512,6 @@ elif page == "CV Analysis":
                     vectors = model.encode(all_texts)
 
                     cv_vector = vectors[0].reshape(1, -1)
-
                     job_vectors = vectors[1:]
 
                     results = []
@@ -424,10 +523,7 @@ elif page == "CV Analysis":
                         matched_skills = [
                             skill
                             for skill in requirements
-                            if skill_is_present(
-                                skill,
-                                cv_text
-                            )
+                            if skill_is_present(skill, cv_text)
                         ]
 
                         missing_skills = [
@@ -449,25 +545,17 @@ elif page == "CV Analysis":
                         ) * 100
 
                         results.append({
-
                             "Job": job["Job"],
-
-                            "Match Score (%)": round(
-                                match_score, 1
-                            ),
-
+                            "Match Score (%)": round(match_score, 1),
                             "Matched Skills": ", ".join(
                                 matched_skills
                             ) or "None detected",
-
                             "Missing Skills": ", ".join(
                                 missing_skills
                             ) or "None detected",
-
                             "AI Text Similarity (%)": round(
                                 similarity_score, 1
                             )
-
                         })
 
                     df = pd.DataFrame(results)
@@ -478,12 +566,15 @@ elif page == "CV Analysis":
                     ).reset_index(drop=True)
 
                     st.session_state["analysis_results"] = df
+                    st.session_state["cv_text"] = cv_text
 
                     st.session_state["selected_job"] = df.iloc[0]["Job"]
 
-                    st.success(
-                        "CV analysis completed!"
-                    )
+                    detected_job = detect_target_job(cv_text)
+
+                    st.session_state["detected_ats_job"] = detected_job
+
+                    st.success("CV analysis completed!")
 
                 except Exception as error:
 
@@ -495,15 +586,15 @@ elif page == "CV Analysis":
 
 
     # ==============================
-    # DISPLAY SAVED RESULTS
+    # DISPLAY RESULTS
     # ==============================
 
     if "analysis_results" in st.session_state:
 
         df = st.session_state["analysis_results"]
+        cv_text = st.session_state["cv_text"]
 
         st.markdown("---")
-
         st.subheader("🏆 Your Best Job Match")
 
         best_job = df.iloc[0]
@@ -528,7 +619,6 @@ elif page == "CV Analysis":
         )
 
         st.markdown("---")
-
         st.subheader("🎯 Skill Gap Analysis")
 
         selected_job = st.selectbox(
@@ -544,65 +634,205 @@ elif page == "CV Analysis":
         col1, col2 = st.columns(2)
 
         with col1:
-
             st.markdown("### ✅ Matched Skills")
 
             matched = selected_result["Matched Skills"]
 
             if matched == "None detected":
-
-                st.write(
-                    "No required skills detected yet."
-                )
-
+                st.write("No required skills detected yet.")
             else:
-
                 for skill in matched.split(", "):
                     st.success(skill)
 
         with col2:
-
             st.markdown("### 📚 Skills to Learn")
 
             missing = selected_result["Missing Skills"]
 
             if missing == "None detected":
-
-                st.success(
-                    "All listed skills were detected!"
-                )
-
+                st.success("All listed skills were detected!")
             else:
-
                 for skill in missing.split(", "):
                     st.info(skill)
 
         st.markdown("---")
-
         st.subheader("🚀 Your Next Step")
 
         if selected_result["Missing Skills"] == "None detected":
-
             st.success(
                 "Great! Your CV contains all the listed "
                 "skills for this role. Keep building projects "
                 "to demonstrate your abilities."
             )
-
         else:
-
             st.write(
                 "Focus on learning and practicing these skills:"
             )
-
-            st.warning(
-                selected_result["Missing Skills"]
-            )
-
+            st.warning(selected_result["Missing Skills"])
             st.write(
                 "Build a small project using these skills "
                 "and add it to your portfolio."
             )
+
+        # ==============================
+        # ATS CHECKER
+        # ==============================
+
+        st.markdown("---")
+
+        st.markdown("""
+        <div class="main-header">
+            <h1>🤖 ATS Resume Checker</h1>
+            <p>
+                Check how well your CV matches the target job
+                and discover ways to improve it.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        detected_job = st.session_state.get("detected_ats_job")
+
+        if detected_job:
+
+            st.success(
+                f"Target job detected from your CV: {detected_job}"
+            )
+
+            target_job = detected_job
+
+        else:
+
+            st.warning(
+                "We couldn't confidently identify a target job "
+                "from your CV. Please select the intended job."
+            )
+
+            target_job = st.selectbox(
+                "Select your target job",
+                list(ats_job_keywords.keys()),
+                key="ats_manual_job"
+            )
+
+        ats_result = calculate_ats_score(cv_text, target_job)
+
+        st.subheader("Your ATS Results")
+
+        score_col, keyword_col, section_col = st.columns(3)
+
+        with score_col:
+            st.metric(
+                "ATS Score",
+                f'{ats_result["score"]}/100'
+            )
+
+        with keyword_col:
+            st.metric(
+                "Matched Keywords",
+                f'{len(ats_result["matched_keywords"])}/'
+                f'{len(ats_job_keywords[target_job])}'
+            )
+
+        with section_col:
+            st.metric(
+                "Detected Sections",
+                f'{len(ats_result["found_sections"])}/5'
+            )
+
+        st.progress(ats_result["score"] / 100)
+
+        if ats_result["score"] >= 80:
+            st.success(
+                "Your CV has a good result according to this basic ATS check."
+            )
+        elif ats_result["score"] >= 60:
+            st.warning(
+                "Your CV needs some improvements to better match the target job."
+            )
+        else:
+            st.error(
+                "Your CV needs improvement before applying for this job."
+            )
+
+        st.markdown("---")
+
+        ats_col1, ats_col2 = st.columns(2)
+
+        with ats_col1:
+
+            st.markdown("### ✅ Matched Keywords")
+
+            if ats_result["matched_keywords"]:
+                for keyword in ats_result["matched_keywords"]:
+                    st.success(keyword)
+            else:
+                st.write("No target keywords were detected.")
+
+        with ats_col2:
+
+            st.markdown("### 📌 Missing Keywords")
+
+            if ats_result["missing_keywords"]:
+                for keyword in ats_result["missing_keywords"]:
+                    st.warning(keyword)
+            else:
+                st.success("All target keywords were detected!")
+
+        st.markdown("---")
+
+        section_col1, section_col2 = st.columns(2)
+
+        with section_col1:
+
+            st.markdown("### ✅ Detected CV Sections")
+
+            for section in ats_result["found_sections"]:
+                st.success(section)
+
+        with section_col2:
+
+            st.markdown("### 📚 Missing CV Sections")
+
+            for section in ats_result["missing_sections"]:
+                st.warning(section)
+
+        st.markdown("---")
+        st.subheader("💡 ATS Improvement Suggestions")
+
+        suggestions = []
+
+        if ats_result["missing_keywords"]:
+            suggestions.append(
+                "Add relevant missing job keywords only when "
+                "they accurately describe your real skills."
+            )
+
+        if ats_result["missing_sections"]:
+            suggestions.append(
+                "Consider adding these sections to your CV: "
+                + ", ".join(ats_result["missing_sections"])
+            )
+
+        if len(cv_text.strip()) < 300:
+            suggestions.append(
+                "Your CV text is quite short. Add more relevant "
+                "details about your education, skills, and projects."
+            )
+
+        if not suggestions:
+            suggestions.append(
+                "Your CV covers the main checks in this basic ATS review. "
+                "Keep your information accurate and up to date."
+            )
+
+        for suggestion in suggestions:
+            st.info(suggestion)
+
+        st.caption(
+            "Note: This is an educational ATS-style checker based on "
+            "text extraction, keyword matching, and section detection. "
+            "It is not connected to a real employer ATS and does not "
+            "guarantee that a CV will pass every company's screening system."
+        )
 
 
 # ==============================
@@ -612,3 +842,4 @@ elif page == "CV Analysis":
 elif page == "AI Mock Interview":
 
     show_interview_page()
+
