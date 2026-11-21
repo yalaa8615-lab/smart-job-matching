@@ -3,6 +3,7 @@ import time
 import threading
 from datetime import datetime
 from io import BytesIO
+import wave
 from html import escape
 
 import cv2
@@ -23,7 +24,8 @@ from mediapipe.tasks.python import vision
 from streamlit_webrtc import (
     webrtc_streamer,
     WebRtcMode,
-    VideoProcessorBase
+    VideoProcessorBase,
+    AudioProcessorBase
 )
 
 from reportlab.lib import colors
@@ -427,6 +429,78 @@ class InterviewProcessor(VideoProcessorBase):
 
 
 # =====================================
+# 4A. INTERVIEW AUDIO CAPTURE
+# =====================================
+
+class InterviewAudioRecorder:
+    """Thread-safe audio buffer shared by the WebRTC audio processor and UI."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.active = False
+        self.frames = []
+        self.sample_rate = 16000
+
+    def start(self):
+        with self.lock:
+            self.frames = []
+            self.sample_rate = 16000
+            self._resampler = None
+            self.active = True
+
+    def add_frame(self, frame):
+        with self.lock:
+            if not self.active:
+                return
+        try:
+            import av
+            resampler = getattr(self, "_resampler", None)
+            if resampler is None:
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+                self._resampler = resampler
+            converted_frames = resampler.resample(frame)
+            chunks = []
+            for converted in converted_frames:
+                chunks.append(converted.to_ndarray().astype("int16", copy=False).tobytes())
+                self.sample_rate = converted.sample_rate or 16000
+            if chunks:
+                with self.lock:
+                    if self.active:
+                        self.frames.extend(chunks)
+        except Exception:
+            # Audio conversion errors are surfaced as an empty recording on stop.
+            return
+
+    def stop(self):
+        with self.lock:
+            self.active = False
+            chunks = list(self.frames)
+            sample_rate = self.sample_rate
+            self.frames = []
+        pcm = b"".join(chunks)
+        if not pcm:
+            return None
+        output = BytesIO()
+        with wave.open(output, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(pcm)
+        return output.getvalue()
+
+
+class InterviewAudioProcessor(AudioProcessorBase):
+    """Receives microphone frames from the same WebRTC session as the camera."""
+
+    def __init__(self, recorder):
+        self.recorder = recorder
+
+    def recv(self, frame):
+        self.recorder.add_frame(frame)
+        return frame
+
+
+# =====================================
 # 5. ANSWER SCORING
 # =====================================
 
@@ -701,107 +775,83 @@ def transcribe_interview_audio(audio_bytes):
 # 7. INTERVIEW QUESTIONS PAGE
 # =====================================
 
-def show_questions_section():
+def show_questions_section(audio_recorder, camera_running):
 
     st.divider()
     st.header("AI Interview Questions")
+    st.write("Answer each question aloud while your camera and microphone are connected.")
 
-    st.write(
-        "Choose a job position to practice role-specific interview questions."
-    )
+    if not camera_running:
+        st.info("Start the camera and microphone above to begin answering interview questions.")
+        return
 
     jobs = list(QUESTION_BANK.keys())
-
-    selected_job = st.selectbox(
-        "Choose Job Position",
-        jobs,
-        key="interview_selected_job"
-    )
+    selected_job = st.selectbox("Choose Job Position", jobs, key="interview_selected_job")
 
     if "interview_answers" not in st.session_state:
         st.session_state.interview_answers = {}
-
     if "interview_question_index" not in st.session_state:
         st.session_state.interview_question_index = 0
-
     if "interview_previous_job" not in st.session_state:
         st.session_state.interview_previous_job = selected_job
-
     if st.session_state.interview_previous_job != selected_job:
-
+        if audio_recorder.active:
+            audio_recorder.stop()
         st.session_state.interview_question_index = 0
         st.session_state.interview_previous_job = selected_job
 
     answers_by_job = st.session_state.interview_answers
-
     if selected_job not in answers_by_job:
         answers_by_job[selected_job] = {}
-
     answers = answers_by_job[selected_job]
     questions = QUESTION_BANK[selected_job]
-
-    index = st.session_state.interview_question_index
-    index = max(0, min(index, len(questions) - 1))
-
-    st.progress(
-        (index + 1) / len(questions)
-    )
-
-    st.caption(
-        f"Question {index + 1} of {len(questions)}"
-    )
-
+    index = max(0, min(st.session_state.interview_question_index, len(questions) - 1))
+    st.progress((index + 1) / len(questions))
+    st.caption(f"Question {index + 1} of {len(questions)}")
     question = questions[index]
-
     st.subheader(question["question"])
 
-    st.write("Answer by speaking. The system will detect Arabic or English automatically.")
-
-    audio_key = f"interview_audio_{selected_job}_{index}"
-    transcript_key = f"interview_transcript_{selected_job}_{index}"
-
+    st.info("Your answer is captured from the microphone connected to the live camera session. No typing is required.")
     audio_consent = st.checkbox(
-        "I consent to recording my answer and sending the audio to the transcription service.",
+        "I consent to recording my spoken answers and sending them to the transcription service.",
         key="interview_audio_consent"
     )
 
+    transcript_key = f"interview_transcript_{selected_job}_{index}"
     if transcript_key not in st.session_state:
         st.session_state[transcript_key] = answers.get(index, "")
 
-    audio_value = st.audio_input(
-        "Record your answer using the microphone",
-        key=audio_key,
-        disabled=not audio_consent
-    )
-
-    if audio_value is not None:
-        st.audio(audio_value, format="audio/wav")
-
-        if st.button(
-            "Convert Speech to Text & Save Answer",
-            key=f"transcribe_{selected_job}_{index}"
-        ):
-            audio_bytes = audio_value.getvalue()
+    if not audio_consent:
+        st.warning("Give audio consent before recording an answer.")
+    elif audio_recorder.active:
+        st.error("Recording your answer now. Speak clearly, then press Stop & Transcribe.")
+        if st.button("Stop & Transcribe Answer", type="primary", key=f"stop_record_{selected_job}_{index}"):
+            audio_bytes = audio_recorder.stop()
             if not audio_bytes:
-                st.warning("No audio was recorded. Please try again.")
+                st.error("No audio frames were received. Check microphone permission and try again.")
             else:
-                with st.spinner("Transcribing your answer..."):
+                with st.spinner("Transcribing your answer in Arabic or English..."):
                     try:
                         transcript = transcribe_interview_audio(audio_bytes)
                         st.session_state[transcript_key] = transcript
                         answers[index] = transcript
-                        st.success("Your spoken answer was converted and saved.")
+                        st.success("Your spoken answer was transcribed and saved.")
                     except Exception as error:
                         st.error(f"Speech-to-text failed: {error}")
+            st.rerun()
+    else:
+        if st.button("Start Answer Recording", type="primary", key=f"start_record_{selected_job}_{index}"):
+            audio_recorder.start()
+            st.rerun()
 
     current_transcript = st.session_state.get(transcript_key, "")
     if current_transcript:
-        st.subheader("Your Answer (automatically transcribed)")
+        st.subheader("Your spoken answer (transcribed)")
         st.write(current_transcript)
-        st.caption("This text was generated from your voice. You do not need to type your answer.")
-
+        st.caption("This answer was generated from your voice. No typing is needed.")
         if st.button(
             "Save Answer & Next" if index < len(questions) - 1 else "Save Final Answer",
+            type="primary",
             key=f"save_transcript_{selected_job}_{index}"
         ):
             answers[index] = current_transcript.strip()
@@ -810,63 +860,34 @@ def show_questions_section():
             st.rerun()
 
     col1, col2 = st.columns(2)
-
     with col1:
-
-        if index > 0:
-
-            if st.button("Previous Question"):
-
+        if index > 0 and st.button("Previous Question", key=f"previous_{selected_job}_{index}"):
+            if audio_recorder.active:
+                st.warning("Stop the current recording before changing questions.")
+            else:
                 st.session_state.interview_question_index -= 1
                 st.rerun()
-
     with col2:
-
-        if index < len(questions) - 1:
-
-            if st.button("Next Question"):
-
+        if index < len(questions) - 1 and st.button("Skip Question", key=f"skip_{selected_job}_{index}"):
+            if audio_recorder.active:
+                st.warning("Stop the current recording before changing questions.")
+            else:
                 st.session_state.interview_question_index += 1
                 st.rerun()
 
-    answered_count = sum(
-        1 for value in answers.values()
-        if value.strip()
-    )
-
-    st.caption(
-        f"Answers saved: {answered_count}/{len(questions)}"
-    )
-
+    answered_count = sum(1 for value in answers.values() if value.strip())
+    st.caption(f"Answers saved: {answered_count}/{len(questions)}")
     if answered_count == len(questions):
-
         st.success("You have answered all interview questions!")
-
     if answered_count > 0:
-
         st.subheader("Preliminary Answer Evaluation")
-
         for question_index, item in enumerate(questions):
-
             answer = answers.get(question_index, "")
-
             if answer.strip():
-
-                score, matched, feedback = evaluate_answer(
-                    answer,
-                    item["keywords"]
-                )
-
-                with st.expander(
-                    f"Question {question_index + 1} - Score: {score}/100"
-                ):
-
+                score, matched, feedback = evaluate_answer(answer, item["keywords"])
+                with st.expander(f"Question {question_index + 1} - Score: {score}/100"):
                     st.write(feedback)
-
-                    st.write(
-                        "Matched keywords:",
-                        ", ".join(matched) if matched else "None"
-                    )
+                    st.write("Matched keywords:", ", ".join(matched) if matched else "None")
 
 
 # =====================================
@@ -899,49 +920,37 @@ def show_interview_page():
 
     monitor = st.session_state.interview_monitor
 
+    if "interview_audio_recorder" not in st.session_state:
+        st.session_state.interview_audio_recorder = InterviewAudioRecorder()
+    audio_recorder = st.session_state.interview_audio_recorder
+
     consent = st.checkbox(
-        "I consent to camera processing and screenshot "
-        "capture when a looking-away indicator is detected."
+        "I consent to camera monitoring and microphone recording for my interview."
     )
 
+    camera_running = False
     if consent:
-
-        st.subheader("Live Interview Camera")
-
+        st.subheader("Live Interview Camera + Microphone")
         webrtc_ctx = webrtc_streamer(
-            key="hire_bath_interview",
+            key="hire_bath_interview_av",
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIGURATION,
-            video_processor_factory=lambda: InterviewProcessor(
-                monitor
-            ),
-            media_stream_constraints={
-                "video": True,
-                "audio": False
-            },
+            video_processor_factory=lambda: InterviewProcessor(monitor),
+            audio_processor_factory=lambda: InterviewAudioProcessor(audio_recorder),
+            media_stream_constraints={"video": True, "audio": True},
             async_processing=True
         )
-
-        if webrtc_ctx.state.playing:
-            st.success("Camera is running.")
+        camera_running = bool(webrtc_ctx.state.playing)
+        if camera_running:
+            st.success("Camera and microphone connection is active.")
         else:
-            st.warning(
-                "Camera is not connected yet. "
-                "Allow camera permission and start it."
-            )
-
-        st.caption(
-            "Stop the camera when the interview ends."
-        )
-
+            st.warning("Start the live camera above and allow both camera and microphone permissions.")
+        st.caption("The camera stays on during the interview. Audio is buffered only while you press Start Answer Recording.")
     else:
+        st.warning("Please provide consent before starting the interview camera and microphone.")
 
-        st.warning(
-            "Please provide consent before starting camera monitoring."
-        )
-
-    # Questions
-    show_questions_section()
+    # Questions are enabled only while the shared audio/video session is active.
+    show_questions_section(audio_recorder, camera_running)
 
     # Monitoring report
     st.divider()
@@ -1066,4 +1075,3 @@ def show_interview_page():
         "The report and screenshots are temporarily stored in "
         "application memory during this session."
     )
-
