@@ -1,12 +1,12 @@
 
-streamlit
+streamlit>=1.41.0
+streamlit-webrtc
 pypdf
 pandas
 sentence-transformers
 scikit-learn
 opencv-python-headless==4.11.0.86
 mediapipe==0.10.21
-streamlit>=1.41.0
 av
 numpy<2
 reportlab
